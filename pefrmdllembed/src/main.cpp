@@ -94,7 +94,7 @@ int main( int argc, char *argv[] )
 {
     std::cout <<
         "pefrmdllembed - Inject DLL file into EXE file" << std::endl
-     << "visit pefrmdllembed.codeplex.com" << std::endl << std::endl;
+     << "visit http://pefrm-units.osdn.jp/pefrmdllembed.html" << std::endl << std::endl;
 
     // Fetch possible input executable and input module from arguments.
     const char *inputExecImageName = "input.exe";
