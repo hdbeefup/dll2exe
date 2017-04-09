@@ -692,11 +692,13 @@ int main( int argc, char *argv[] )
 
             std::uint32_t indexOfCallback = 0;
 
+            std::uint32_t sectoffAddrOfCallbacks = moduleImage.tlsInfo.addressOfCallbacksRef.GetSectionOffset();
+
             while ( true )
             {
                 std::uint64_t callbackPtr;
 
-                tlsSect->stream.Seek( (std::int32_t)( indexOfCallback * archPointerSize ) );
+                tlsSect->stream.Seek( (std::int32_t)( sectoffAddrOfCallbacks + indexOfCallback * archPointerSize ) );
 
                 // Advance the index to next.
                 indexOfCallback++;
@@ -738,31 +740,51 @@ int main( int argc, char *argv[] )
                     break;
                 }
 
-                // Call this function.
-                std::uint32_t rvaToCallback = (std::uint32_t)( callbackPtr - exeModuleBase );
-                
-                std::uint32_t paramReserved = 0;
-                std::uint32_t paramReason = DLL_PROCESS_ATTACH;
+                // Need to determine the redirected RVA.
+                // For that we have to find the section this callback is targetting.
+                std::uint32_t rvaToCallback = 0;
+                {
+                    std::uint32_t modrvaToCallback = (std::uint32_t)( callbackPtr - modImageBase );
 
-                if ( genCodeArch == asmjit::ArchInfo::kTypeX86 )
-                {
-                    x86_asm.push( paramReserved );
-                    x86_asm.push( paramReason );
-                    x86_asm.push( dllInstanceHandle );
-                    x86_asm.call( rvaToCallback );
-                }
-                else if ( genCodeArch == asmjit::ArchInfo::kTypeX64 )
-                {
-                    x86_asm.mov( asmjit::x86::rcx, dllInstanceHandle );
-                    x86_asm.mov( asmjit::x86::rdx, paramReason );
-                    x86_asm.mov( asmjit::x86::r8, paramReserved );
-                    x86_asm.call( rvaToCallback );
-                }
-                else
-                {
-                    std::cout << "failed to call TLS callback due to unknown architecture" << std::endl;
+                    std::uint32_t modTargetSectIntOff;
+                    PEFile::PESection *modTargetSect = moduleImage.FindSectionByRVA( modrvaToCallback, NULL, &modTargetSectIntOff );
 
-                    return -17;
+                    if ( modTargetSect )
+                    {
+                        auto findIter = sectLinkMap.find( modTargetSect );
+
+                        assert( findIter != sectLinkMap.end() );
+
+                        rvaToCallback = findIter->second.GetSection()->ResolveRVA( modTargetSectIntOff );
+                    }
+                }
+
+                if ( rvaToCallback != 0 )
+                {
+                    // Call this function.
+                    std::uint32_t paramReserved = 0;
+                    std::uint32_t paramReason = DLL_PROCESS_ATTACH;
+
+                    if ( genCodeArch == asmjit::ArchInfo::kTypeX86 )
+                    {
+                        x86_asm.push( paramReserved );
+                        x86_asm.push( paramReason );
+                        x86_asm.push( dllInstanceHandle );
+                        x86_asm.call( rvaToCallback );
+                    }
+                    else if ( genCodeArch == asmjit::ArchInfo::kTypeX64 )
+                    {
+                        x86_asm.mov( asmjit::x86::rcx, dllInstanceHandle );
+                        x86_asm.mov( asmjit::x86::rdx, paramReason );
+                        x86_asm.mov( asmjit::x86::r8, paramReserved );
+                        x86_asm.call( rvaToCallback );
+                    }
+                    else
+                    {
+                        std::cout << "failed to call TLS callback due to unknown architecture" << std::endl;
+
+                        return -17;
+                    }
                 }
             }
         }
