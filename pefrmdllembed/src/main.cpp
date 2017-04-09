@@ -688,6 +688,8 @@ int main( int argc, char *argv[] )
         // Call all initializers if we have some.
         if ( PEFile::PESection *tlsSect = moduleImage.tlsInfo.addressOfCallbacksRef.GetSection() )
         {
+            std::cout << "linking TLS callbacks" << std::endl;
+
             std::uint32_t indexOfCallback = 0;
 
             while ( true )
@@ -695,6 +697,9 @@ int main( int argc, char *argv[] )
                 std::uint64_t callbackPtr;
 
                 tlsSect->stream.Seek( (std::int32_t)( indexOfCallback * archPointerSize ) );
+
+                // Advance the index to next.
+                indexOfCallback++;
 
                 if ( archPointerSize == 4 )
                 {
