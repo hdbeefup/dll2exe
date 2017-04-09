@@ -431,9 +431,11 @@ int main( int argc, char *argv[] )
 
         // Just for the heck of it we could embed exports aswell.
 
+#if 0
         // If the module image has TLS indices we have to initialize
         // utility functions in a special thunk array.
         PEFile::PESectionDataReference utilityThunkRef;
+#endif
 
         bool hasStaticTLS = ( moduleImage.tlsInfo.addressOfIndexRef.GetSection() != NULL );
         
@@ -441,6 +443,7 @@ int main( int argc, char *argv[] )
         {
             std::cout << "WARNING: module image has static TLS; might not work as expected" << std::endl;
 
+#if 0
             PEFile::PEImportDesc utilityDesc;
             utilityDesc.DLLName = "Kernel32.dll";
             
@@ -483,6 +486,7 @@ int main( int argc, char *argv[] )
 
             // Invalidate the native array.
             exeImage.importsAllocEntry = PEFile::PESectionAllocation();
+#endif
         }
 
         // Embed the section, if required.
@@ -674,9 +678,11 @@ int main( int argc, char *argv[] )
         // So if we have TLS indices, we have to use the utility thunk to allocate into the array.
         if ( hasStaticTLS )
         {
+#if 0
             // Good read about TEB native entries:
             // http://www.geoffchappell.com/studies/windows/win32/ntdll/structs/teb/index.htm
             assert( utilityThunkRef.GetSection() != NULL );
+#endif
 
             x86_asm.xor_( x86_asm.zax(), x86_asm.zax() ),
             x86_asm.mov( asmjit::X86Mem( exeModuleBase + embedImageBaseOffset + moduleImage.tlsInfo.addressOfIndexRef.GetRVA() ), x86_asm.zax() );
