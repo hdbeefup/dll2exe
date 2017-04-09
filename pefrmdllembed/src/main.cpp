@@ -29,6 +29,8 @@ inline void BufferPatternFind(
         for ( size_t patIdx = 0; patIdx < numPatterns; patIdx++ )
         {
             const char *curPat = patterns[patIdx];
+
+            size_t patternLen = (size_t)*curPat++;
             
             bool curPatternMatch = true;
 
@@ -36,14 +38,16 @@ inline void BufferPatternFind(
 
             while ( true )
             {
-                char c = *curPat;
-
                 // Has the pattern ended?
                 // Then we accept.
-                if ( c == 0 )
+                if ( patternLen == 0 )
                 {
                     break;
                 }
+
+                patternLen--;
+
+                char c = *curPat;
 
                 // Is the current pattern check above the buffer bound?
                 // Then we reject, because the pattern is longer than expected.
@@ -111,7 +115,14 @@ int main( int argc, char *argv[] )
         inputModImageName = argv[2];
     }
 
-    std::cout << "loading: " << inputExecImageName << ", " << inputModImageName << std::endl << std::endl;
+    const char *outputModImageName = "output.exe";
+
+    if ( argc >= 4 )
+    {
+        outputModImageName = argv[3];
+    }
+
+    std::cout << "loading: \"" << inputExecImageName << "\", \"" << inputModImageName << "\"" << std::endl << std::endl;
 
     // We leave out all kinds of exception management as an exercise to the reader.
 
@@ -198,12 +209,16 @@ int main( int argc, char *argv[] )
         genCodeArch = asmjit::ArchInfo::kTypeX86;
 
         archPointerSize = 4;
+
+        std::cout << "architecture: 32bit" << std::endl;
     }
     else if ( exeMachineType == PEL_IMAGE_FILE_MACHINE_AMD64 )
     {
         genCodeArch = asmjit::ArchInfo::kTypeX64;
 
         archPointerSize = 8;
+
+        std::cout << "architecture: 64bit" << std::endl;
     }
     else
     {
@@ -581,6 +596,16 @@ int main( int argc, char *argv[] )
         {
             std::cout << "patching static TLS data references" << std::endl;
 
+            // Calculate the VA to the TLS.
+            std::uint64_t vaTLSData;
+            {
+                auto findIter = sectLinkMap.find( moduleImage.tlsInfo.allocEntry.GetSection() );
+
+                assert( findIter != sectLinkMap.end() );
+
+                vaTLSData = ( exeModuleBase + findIter->second.GetSection()->ResolveRVA( moduleImage.tlsInfo.allocEntry.ResolveInternalOffset( 0 ) ) );
+            }
+
             // We do a simple patch of all TLS references to point directly inside the TLS data array.
             // This will disable all thread-local abilities but it will make the embedding work.
             moduleImage.ForAllSections(
@@ -599,11 +624,45 @@ int main( int argc, char *argv[] )
                 // Depending on architecture...
                 if ( genCodeArch == asmjit::ArchInfo::kTypeX86 )
                 {
-                    
+                    static const char *patterns[] =
+                    {
+                        "\x06\x64\xa1\x2c\x00\x00\x00",         // mov eax,fs:[1Ch]
+                        "\x07\x64\x8b\x1d\x2c\x00\x00\x00",     // mov ebx,fs:[1Ch]
+                        "\x07\x64\x8b\x0d\x2c\x00\x00\x00",     // mov ecx,fs:[1Ch]
+                        "\x07\x64\x8b\x15\x2c\x00\x00\x00",     // mov edx,fs:[1Ch]
+                        "\x07\x64\x8b\x35\x2c\x00\x00\x00",     // mov esi,fs:[1Ch]
+                        "\x07\x64\x8b\x3d\x2c\x00\x00\x00"      // mov edi,fs:[1Ch]
+                    };
+
+                    char *dataBuf = (char*)exeSect->stream.Data();
+
+                    BufferPatternFind( dataBuf, (size_t)exeSect->stream.Size(), _countof(patterns), patterns,
+                        [&]( size_t patIdx, size_t bufOff, size_t matchSize )
+                    {
+                        // Just need to put a NOP.
+                        // Then patch the offset with a new one.
+                        char *curPtr = ( dataBuf + bufOff );
+
+                        char methodChars[] = { 0x05, 0x1d, 0x0d, 0x15, 0x35, 0x3d };
+
+                        *( curPtr + 0 ) = (char)0x8d;
+                        *( curPtr + 1 ) = methodChars[ patIdx ];
+                        // We want to give it the address of the static TLS thing.
+                        *( (std::uint32_t*)( curPtr + 2 ) ) = (std::uint32_t)( vaTLSData + 0 );
+
+                        // If the image is relocatable, add a relocation entry aswell.
+                        if ( requiresRelocations )
+                        {
+                            exeImage.AddRelocation( exeSect->ResolveRVA( (std::uint32_t)( bufOff + 2 ) ), PEFile::PEBaseReloc::eRelocType::HIGHLOW );
+                        }
+
+                        // Pad the remainder with NOPs.
+                        memset( curPtr + 6, 0x90, matchSize - 6 );
+                    });
                 }
                 else if ( genCodeArch == asmjit::ArchInfo::kTypeX64 )
                 {
-
+                    // No idea what to do here; this is for later I guess.
                 }
                 else
                 {
@@ -766,9 +825,9 @@ int main( int argc, char *argv[] )
 
     // Write out the new executable image.
     {
-        std::cout << "writing output image (output.exe)" << std::endl;
+        std::cout << "writing output image (" << outputModImageName << ")" << std::endl;
 
-        std::fstream stlStreamOut( "output.exe", std::ios::binary | std::ios::out );
+        std::fstream stlStreamOut( outputModImageName, std::ios::binary | std::ios::out );
 
         PEStreamSTL peOutStream( &stlStreamOut );
 
