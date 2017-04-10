@@ -998,6 +998,13 @@ int main( int argc, char *argv[] )
 
             std::fstream stlStreamOut( outputModImageName, std::ios::binary | std::ios::out );
 
+            if ( !stlStreamOut.good() )
+            {
+                std::cout << "failed to create output file (" << outputModImageName << ")" << std::endl;
+
+                return -18;
+            }
+
             PEStreamSTL peOutStream( &stlStreamOut );
 
             exeImage.WriteToStream( &peOutStream );
@@ -1010,7 +1017,7 @@ int main( int argc, char *argv[] )
     {
         std::cout << "error: " << except.desc_str();
 
-        iReturnCode = -1;
+        iReturnCode = -42;
 
         // Continue.
     }
