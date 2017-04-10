@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <peframework.h>
 #define ASMJIT_STATIC
 #include <asmjit/asmjit.h>
@@ -9,6 +11,9 @@
 #include <fstream>
 
 #include <asmjitshared.h>
+
+// We need PE image structures due to Win32 image loading behavior.
+#include "peloader.serialize.h"
 
 // Creates a redirection reference between modules.
 inline PEFile::PESectionDataReference RedirectionRef(
@@ -267,7 +272,7 @@ int main( int argc, char *argv[] )
         // We keep a list of all sections that we put into the executable image.
         // This is important to transfer all the remaining data that is tied to sections.
         std::unordered_map
-            <PEFile::PESection *, // we assume the original module stays immutable.
+            <const PEFile::PESection *, // we assume the original module stays immutable.
                 PEFile::PESectionReference> sectLinkMap;
 
         sectLinkMap.reserve( moduleImage.GetSectionCount() );
@@ -361,13 +366,203 @@ int main( int argc, char *argv[] )
             sectLinkMap[ theSect ] = std::move( sectInsideRef );
         });
 
-        // Maybe we need to create a new meta-section.
-        PEFile::PESection metaSection;
-        metaSection.shortName = ".meta";
-        metaSection.chars.sect_containsInitData = true;
-        metaSection.chars.sect_mem_execute = false;
-        metaSection.chars.sect_mem_read = true;
-        metaSection.chars.sect_mem_write = true;    // because we inject rogue IATs.
+        // We need to create a special PESection that contains the DLL image PE headers,
+        // called ".pedata".
+        {
+            std::cout << "embedding module image PE headers" << std::endl;
+
+            PEFile::PESection pedataSect;
+            pedataSect.shortName = ".pedata";
+            pedataSect.chars.sect_mem_execute = false;
+            pedataSect.chars.sect_mem_read = true;
+            pedataSect.chars.sect_mem_write = false;
+
+            pedataSect.stream.Seek( 0 );
+
+            // Here we go. We actually do not map worthless stuff.
+            PEStructures::IMAGE_DOS_HEADER dosHeader;
+            dosHeader.e_magic = IMAGE_DOS_SIGNATURE;
+            dosHeader.e_cblp = 0;
+            dosHeader.e_cp = 0;
+            dosHeader.e_crlc = 0;
+            dosHeader.e_cparhdr = 0;
+            dosHeader.e_minalloc = 0;
+            dosHeader.e_maxalloc = 0;
+            dosHeader.e_ss = 0;
+            dosHeader.e_sp = 0;
+            dosHeader.e_csum = 0;
+            dosHeader.e_ip = 0;
+            dosHeader.e_cs = 0;
+            dosHeader.e_lfarlc = 0;
+            dosHeader.e_ovno = 0;
+            dosHeader.e_res[0] = 0;
+            dosHeader.e_res[1] = 0;
+            dosHeader.e_res[2] = 0;
+            dosHeader.e_res[3] = 0;
+            dosHeader.e_oemid = 0;
+            dosHeader.e_oeminfo = 0;
+            memset( dosHeader.e_res2, 0, sizeof( dosHeader.e_res2 ) );
+            // this field actually matters, but is an offset from this header now.
+            dosHeader.e_lfanew = sizeof(dosHeader);
+
+            pedataSect.stream.WriteStruct( dosHeader );
+
+            // Have to calculate the size of the optional header that we will write.
+            std::uint32_t optHeaderSize = sizeof( std::uint16_t );  // magic.
+
+            if ( moduleImage.isExtendedFormat )
+            {
+                optHeaderSize += sizeof(PEStructures::IMAGE_OPTIONAL_HEADER64);
+            }
+            else
+            {
+                optHeaderSize += sizeof(PEStructures::IMAGE_OPTIONAL_HEADER32);
+            }
+
+            optHeaderSize += sizeof(PEStructures::IMAGE_DATA_DIRECTORY) * PEL_IMAGE_NUMBEROF_DIRECTORY_ENTRIES;
+
+            // Decide on what architecture we have, and embed the correct optional headers.
+            PEStructures::IMAGE_PE_HEADER peHeader;
+            peHeader.Signature = 'EP';
+            peHeader.FileHeader.Machine = modMachineType;
+            peHeader.FileHeader.NumberOfSections = moduleImage.GetSectionCount();
+            peHeader.FileHeader.TimeDateStamp = moduleImage.pe_finfo.timeDateStamp;
+            peHeader.FileHeader.PointerToSymbolTable = 0;
+            peHeader.FileHeader.NumberOfSymbols = 0;
+            peHeader.FileHeader.SizeOfOptionalHeader = optHeaderSize;
+            peHeader.FileHeader.Characteristics = moduleImage.GetPENativeFileFlags();
+
+            pedataSect.stream.WriteStruct( peHeader );
+
+            // Now write the machine dependent stuff.
+            if ( moduleImage.isExtendedFormat )
+            {
+                pedataSect.stream.WriteUInt16( IMAGE_NT_OPTIONAL_HDR64_MAGIC );
+
+                PEStructures::IMAGE_OPTIONAL_HEADER64 optHeader;
+                optHeader.MajorLinkerVersion = moduleImage.peOptHeader.majorLinkerVersion;
+                optHeader.MinorLinkerVersion = moduleImage.peOptHeader.minorLinkerVersion;
+                optHeader.SizeOfCode = moduleImage.peOptHeader.sizeOfCode;
+                optHeader.SizeOfInitializedData = moduleImage.peOptHeader.sizeOfInitializedData;
+                optHeader.SizeOfUninitializedData = moduleImage.peOptHeader.sizeOfUninitializedData;
+                optHeader.AddressOfEntryPoint = 0;
+                optHeader.BaseOfCode = moduleImage.peOptHeader.baseOfCode;
+                optHeader.ImageBase = ( exeModuleBase + embedImageBaseOffset );
+                optHeader.SectionAlignment = moduleImage.GetSectionAlignment();
+                optHeader.FileAlignment = 0;
+                optHeader.MajorOperatingSystemVersion = moduleImage.peOptHeader.majorOSVersion;
+                optHeader.MinorOperatingSystemVersion = moduleImage.peOptHeader.minorOSVersion;
+                optHeader.MajorImageVersion = moduleImage.peOptHeader.majorImageVersion;
+                optHeader.MinorImageVersion = moduleImage.peOptHeader.minorImageVersion;
+                optHeader.MajorSubsystemVersion = moduleImage.peOptHeader.majorSubsysVersion;
+                optHeader.MinorSubsystemVersion = moduleImage.peOptHeader.minorSubsysVersion;
+                optHeader.Win32VersionValue = moduleImage.peOptHeader.win32VersionValue;
+                optHeader.SizeOfImage = moduleImage.peOptHeader.sizeOfImage;
+                optHeader.SizeOfHeaders = moduleImage.peOptHeader.sizeOfHeaders;
+                optHeader.CheckSum = moduleImage.peOptHeader.checkSum;
+                optHeader.Subsystem = moduleImage.peOptHeader.subsys;
+                optHeader.DllCharacteristics = moduleImage.GetPENativeDLLOptFlags();
+                optHeader.SizeOfStackReserve = moduleImage.peOptHeader.sizeOfStackReserve;
+                optHeader.SizeOfStackCommit = moduleImage.peOptHeader.sizeOfStackCommit;
+                optHeader.SizeOfHeapReserve = moduleImage.peOptHeader.sizeOfHeapReserve;
+                optHeader.SizeOfHeapCommit = moduleImage.peOptHeader.sizeOfHeapCommit;
+                optHeader.LoaderFlags = moduleImage.peOptHeader.loaderFlags;
+                optHeader.NumberOfRvaAndSizes = PEL_IMAGE_NUMBEROF_DIRECTORY_ENTRIES;
+
+                // Write.
+                pedataSect.stream.WriteStruct( optHeader );
+            }
+            else
+            {
+                pedataSect.stream.WriteUInt16( IMAGE_NT_OPTIONAL_HDR32_MAGIC );
+
+                PEStructures::IMAGE_OPTIONAL_HEADER32 optHeader;
+                optHeader.MajorLinkerVersion = moduleImage.peOptHeader.majorLinkerVersion;
+                optHeader.MinorLinkerVersion = moduleImage.peOptHeader.minorLinkerVersion;
+                optHeader.SizeOfCode = moduleImage.peOptHeader.sizeOfCode;
+                optHeader.SizeOfInitializedData = moduleImage.peOptHeader.sizeOfInitializedData;
+                optHeader.SizeOfUninitializedData = moduleImage.peOptHeader.sizeOfUninitializedData;
+                optHeader.AddressOfEntryPoint = 0;  // we do not need that.
+                optHeader.BaseOfCode = moduleImage.peOptHeader.baseOfCode;
+                optHeader.BaseOfData = moduleImage.peOptHeader.baseOfData;
+                optHeader.ImageBase = (std::uint32_t)( exeModuleBase + embedImageBaseOffset );
+                optHeader.SectionAlignment = moduleImage.GetSectionAlignment();
+                optHeader.FileAlignment = 0;    // who knows?
+                optHeader.MajorOperatingSystemVersion = moduleImage.peOptHeader.majorOSVersion;
+                optHeader.MinorOperatingSystemVersion = moduleImage.peOptHeader.minorOSVersion;
+                optHeader.MajorImageVersion = moduleImage.peOptHeader.majorImageVersion;
+                optHeader.MinorImageVersion = moduleImage.peOptHeader.minorImageVersion;
+                optHeader.MajorSubsystemVersion = moduleImage.peOptHeader.majorSubsysVersion;
+                optHeader.MinorSubsystemVersion = moduleImage.peOptHeader.minorSubsysVersion;
+                optHeader.Win32VersionValue = moduleImage.peOptHeader.win32VersionValue;
+                optHeader.SizeOfImage = moduleImage.peOptHeader.sizeOfImage;
+                optHeader.SizeOfHeaders = 0;    // no idea, who cares? not going to redo this mess.
+                optHeader.CheckSum = moduleImage.peOptHeader.checkSum;
+                optHeader.Subsystem = moduleImage.peOptHeader.subsys;
+                optHeader.DllCharacteristics = moduleImage.GetPENativeDLLOptFlags();
+                optHeader.SizeOfStackReserve = (std::uint32_t)moduleImage.peOptHeader.sizeOfStackReserve;
+                optHeader.SizeOfStackCommit = (std::uint32_t)moduleImage.peOptHeader.sizeOfStackCommit;
+                optHeader.SizeOfHeapReserve = (std::uint32_t)moduleImage.peOptHeader.sizeOfHeapReserve;
+                optHeader.SizeOfHeapCommit = (std::uint32_t)moduleImage.peOptHeader.sizeOfHeapCommit;
+                optHeader.LoaderFlags = moduleImage.peOptHeader.loaderFlags;
+                optHeader.NumberOfRvaAndSizes = PEL_IMAGE_NUMBEROF_DIRECTORY_ENTRIES;
+
+                // Write.
+                pedataSect.stream.WriteStruct( optHeader );
+            }
+
+            // Must write data directories now, we sort of simulate them.
+            {
+                PEStructures::IMAGE_DATA_DIRECTORY dataDirs[ PEL_IMAGE_NUMBEROF_DIRECTORY_ENTRIES ];
+                memset( dataDirs, 0, sizeof(dataDirs) );
+
+                // TOOD: fill them out as necessary.
+
+                // Write the data dirs.
+                pedataSect.stream.WriteStruct( dataDirs );
+            }
+
+            // Finally we write the section headers.
+            // Those might actually be important, who knows.
+            {
+                moduleImage.ForAllSections(
+                    [&]( const PEFile::PESection *theSect )
+                {
+                    PEStructures::IMAGE_SECTION_HEADER sectHeader;
+                    strncpy( (char*)sectHeader.Name, theSect->shortName.c_str(), _countof(sectHeader.Name) );
+                    sectHeader.Misc.VirtualSize = theSect->GetVirtualSize();
+                    // we actually have to write the old information!
+                    // which is very useless at this point, unless you know what you are doing.
+                    sectHeader.VirtualAddress = theSect->GetVirtualAddress();
+                    sectHeader.SizeOfRawData = theSect->stream.Size();
+                    sectHeader.PointerToRawData = 0;    // nobody cares.
+                    sectHeader.PointerToLinenumbers = 0;
+                    sectHeader.NumberOfRelocations = 0;
+                    sectHeader.NumberOfLinenumbers = 0;
+                    sectHeader.Characteristics = theSect->GetPENativeFlags();
+
+                    // Write.
+                    pedataSect.stream.WriteStruct( sectHeader );
+                });
+            }
+
+            // Embed the section, if it fits. Otherwise we have a potential disaster.
+            if ( pedataSect.IsEmpty() == false )
+            {
+                pedataSect.Finalize();
+
+                std::uint32_t sectMemPos = ( embedImageBaseOffset + 0 );    // must at the beginning of the PE image.
+
+                pedataSect.SetPlacementInfo( sectMemPos, pedataSect.GetVirtualSize() );
+
+                PEFile::PESection *refInside = exeImage.PlaceSection( std::move( pedataSect ) );
+
+                if ( refInside == NULL )
+                {
+                    std::cout << "WARNING: failed to embed module image PE headers (.pedata); module might not work properly" << std::endl;
+                }
+            }
+        }
 
         // Decide about the thunk entry size.
         std::uint32_t thunkEntrySize = archPointerSize;
@@ -431,70 +626,11 @@ int main( int argc, char *argv[] )
 
         // Just for the heck of it we could embed exports aswell.
 
-#if 0
-        // If the module image has TLS indices we have to initialize
-        // utility functions in a special thunk array.
-        PEFile::PESectionDataReference utilityThunkRef;
-#endif
-
         bool hasStaticTLS = ( moduleImage.tlsInfo.addressOfIndexRef.GetSection() != NULL );
         
         if ( hasStaticTLS )
         {
             std::cout << "WARNING: module image has static TLS; might not work as expected" << std::endl;
-
-#if 0
-            PEFile::PEImportDesc utilityDesc;
-            utilityDesc.DLLName = "Kernel32.dll";
-            
-            // All functions we need.
-            {
-                PEFile::PEImportDesc::importFunc tlsAllocInfo;
-                tlsAllocInfo.isOrdinalImport = false;
-                tlsAllocInfo.name = "TlsAlloc";
-                tlsAllocInfo.ordinal_hint = 0;
-                utilityDesc.funcs.push_back( std::move( tlsAllocInfo ) );
-
-                PEFile::PEImportDesc::importFunc tlsSetValueInfo;
-                tlsSetValueInfo.isOrdinalImport = false;
-                tlsSetValueInfo.name = "TlsSetValue";
-                tlsSetValueInfo.ordinal_hint = 0;
-                utilityDesc.funcs.push_back( std::move( tlsSetValueInfo ) );
-
-                PEFile::PEImportDesc::importFunc virtualAllocInfo;
-                virtualAllocInfo.isOrdinalImport = false;
-                virtualAllocInfo.name = "VirtualAlloc";
-                virtualAllocInfo.ordinal_hint = 0;
-                utilityDesc.funcs.push_back( std::move( virtualAllocInfo ) );
-            }
-
-            // Allocate a thunk array as destination.
-            const std::uint32_t thunkArraySize = (std::uint32_t)( archPointerSize * utilityDesc.funcs.size() );
-
-            PEFile::PESectionAllocation thunkAllocEntry;
-            metaSection.Allocate( thunkAllocEntry, thunkArraySize );
-
-            // Put into the import descriptor.
-            utilityDesc.firstThunkRef = PEFile::PESectionDataReference( thunkAllocEntry.GetSection(), thunkAllocEntry.ResolveInternalOffset( 0 ) );
-
-            // Remember for the code.
-            utilityThunkRef = PEFile::PESectionDataReference( thunkAllocEntry.GetSection(), thunkAllocEntry.ResolveInternalOffset( 0 ) );
-
-            exeModuleAllocs.push_back( std::move( thunkAllocEntry ) );
-
-            exeImage.imports.push_back( std::move( utilityDesc ) );
-
-            // Invalidate the native array.
-            exeImage.importsAllocEntry = PEFile::PESectionAllocation();
-#endif
-        }
-
-        // Embed the section, if required.
-        if ( metaSection.IsEmpty() == false )
-        {
-            metaSection.Finalize();
-
-            exeImage.AddSection( std::move( metaSection ) );
         }
 
         std::cout << "rebasing DLL sections" << std::endl;
@@ -678,11 +814,9 @@ int main( int argc, char *argv[] )
         // So if we have TLS indices, we have to use the utility thunk to allocate into the array.
         if ( hasStaticTLS )
         {
-#if 0
             // Good read about TEB native entries:
             // http://www.geoffchappell.com/studies/windows/win32/ntdll/structs/teb/index.htm
-            assert( utilityThunkRef.GetSection() != NULL );
-#endif
+            // But to keep things simple we ain't gonna do that.
 
             x86_asm.xor_( x86_asm.zax(), x86_asm.zax() ),
             x86_asm.mov( asmjit::X86Mem( exeModuleBase + embedImageBaseOffset + moduleImage.tlsInfo.addressOfIndexRef.GetRVA() ), x86_asm.zax() );
