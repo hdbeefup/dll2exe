@@ -117,9 +117,10 @@ struct resourceHelpers
     {
         bool hasChanged = false;
 
-        for ( const PEFile::PEResourceItem *embedItem : toEmbed.children )
+        toEmbed.ForAllChildren(
+            [&]( const PEFile::PEResourceItem *embedItem, bool hasIdentifierName )
         {
-            PEFile::PEResourceItem *resItem = into.FindItem( embedItem->hasIdentifierName, embedItem->name, embedItem->identifier );
+            PEFile::PEResourceItem *resItem = into.FindItem( hasIdentifierName, embedItem->name, embedItem->identifier );
 
             const std::wstring newPath = AppendPath( curPath, embedItem->GetName() );
 
@@ -133,7 +134,7 @@ struct resourceHelpers
                 // Simply insert this item.
                 try
                 {
-                    into.children.push_back( resItem );
+                    into.AddItem( resItem );
                 }
                 catch( ... )
                 {
@@ -173,13 +174,26 @@ struct resourceHelpers
                 if ( wantsReplace )
                 {
                     // Give a warning to the user that we replace a resource.
-                    std::wcout << L"* replacing resource item '" << newPath << L"'";
+                    std::wcout << L"* replacing resource item '" << newPath << L"'" << std::endl;
 
                     hasChanged = true;
 
                     into.RemoveItem( resItem );
 
-                    into.children.push_back( CloneResourceItem( calcRedirRef, embedItem ) );
+                    delete resItem;
+
+                    resItem = CloneResourceItem( calcRedirRef, embedItem );
+
+                    try
+                    {
+                        into.AddItem( resItem );
+                    }
+                    catch( ... )
+                    {
+                        delete resItem;
+
+                        throw;
+                    }
                 }
 
                 if ( wantsMerge )
@@ -199,7 +213,7 @@ struct resourceHelpers
                     }
                 }
             }
-        }
+        });
 
         return hasChanged;
     }
@@ -237,13 +251,14 @@ struct resourceHelpers
             dirItem.minorVersion = srcDirItem->minorVersion;
 
             // We have to clone all sub directories.
-            for ( const PEFile::PEResourceItem *srcItemChild : srcDirItem->children )
+            srcDirItem->ForAllChildren(
+                [&]( const PEFile::PEResourceItem *srcItemChild, bool hasIdentifierName )
             {
                 PEFile::PEResourceItem *newItem = CloneResourceItem( calcRedirRef, srcItemChild );
 
                 try
                 {
-                    dirItem.children.push_back( newItem );
+                    dirItem.AddItem( newItem );
                 }
                 catch( ... )
                 {
@@ -251,7 +266,7 @@ struct resourceHelpers
                     
                     throw;
                 }
-            }
+            });
 
             itemOut = new PEFile::PEResourceDir( std::move( dirItem ) );
         }
@@ -807,7 +822,7 @@ int main( int argc, char *argv[] )
             }
 
             // Copy over the resources aswell.
-            if ( moduleImage.resourceRoot.children.empty() == false )
+            if ( moduleImage.resourceRoot.IsEmpty() == false )
             {
                 std::cout << "embedding module resources" << std::endl;
 
