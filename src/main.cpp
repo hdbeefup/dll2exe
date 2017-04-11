@@ -99,6 +99,171 @@ inline void BufferPatternFind(
     }
 }
 
+// Embed a directory entry into the executable.
+template <typename calcRedirRef_t>
+struct resourceHelpers
+{
+    static std::wstring AppendPath( const std::wstring& curPath, std::wstring nameToAppend )
+    {
+        if ( curPath.empty() )
+        {
+            return nameToAppend;
+        }
+
+        return ( curPath + L"::" + nameToAppend );
+    }
+
+    static bool EmbedResourceDirectoryInto( const std::wstring& curPath, calcRedirRef_t& calcRedirRef, PEFile::PEResourceDir& into, const PEFile::PEResourceDir& toEmbed )
+    {
+        bool hasChanged = false;
+
+        for ( const PEFile::PEResourceItem *embedItem : toEmbed.children )
+        {
+            PEFile::PEResourceItem *resItem = into.FindItem( embedItem->hasIdentifierName, embedItem->name, embedItem->identifier );
+
+            const std::wstring newPath = AppendPath( curPath, embedItem->GetName() );
+
+            if ( !resItem )
+            {
+                std::wcout << "* merging resource tree '" << newPath << "'" << std::endl;
+
+                // Create it if not there yet.
+                resItem = CloneResourceItem( calcRedirRef, embedItem );
+
+                // Simply insert this item.
+                try
+                {
+                    into.children.push_back( resItem );
+                }
+                catch( ... )
+                {
+                    delete resItem;
+
+                    throw;
+                }
+
+                hasChanged = true;
+            }
+            else
+            {
+                // Need to merge the two items, embedItem into resItem.
+                PEFile::PEResourceItem::eType embedItemType = embedItem->itemType;
+
+                bool wantsMerge = false;
+                bool wantsReplace = false;
+
+                // If the types do not match, then we should replace, because we cannot merge.
+                if ( embedItemType != into.itemType )
+                {
+                    wantsReplace = true;
+                }
+
+                // If the insert-type is data, we cannot merge anyway, because data is data.
+                // Then a replace is required.
+                if ( embedItemType == PEFile::PEResourceItem::eType::DATA )
+                {
+                    wantsReplace = true;
+                }
+                // Otherwise we can safely merge.
+                else if ( embedItemType == PEFile::PEResourceItem::eType::DIRECTORY )
+                {
+                    wantsMerge = true;
+                }
+
+                if ( wantsReplace )
+                {
+                    // Give a warning to the user that we replace a resource.
+                    std::wcout << L"* replacing resource item '" << newPath << L"'";
+
+                    hasChanged = true;
+
+                    into.RemoveItem( resItem );
+
+                    into.children.push_back( CloneResourceItem( calcRedirRef, embedItem ) );
+                }
+
+                if ( wantsMerge )
+                {
+                    // A merge is safe.
+                    assert( embedItemType == PEFile::PEResourceItem::eType::DIRECTORY );
+
+                    const PEFile::PEResourceDir *embedDir = (const PEFile::PEResourceDir*)embedItem;
+
+                    PEFile::PEResourceDir *resDir = (PEFile::PEResourceDir*)resItem;
+
+                    bool subHasChanged = EmbedResourceDirectoryInto( newPath, calcRedirRef, *resDir, *embedDir );
+
+                    if ( subHasChanged )
+                    {
+                        hasChanged = true;
+                    }
+                }
+            }
+        }
+
+        return hasChanged;
+    }
+
+    // Clones a resource item 
+    static PEFile::PEResourceItem* CloneResourceItem( calcRedirRef_t& calcRedirRef, const PEFile::PEResourceItem *srcItem )
+    {
+        PEFile::PEResourceItem *itemOut = NULL;
+
+        PEFile::PEResourceItem::eType srcItemType = srcItem->itemType;
+
+        if ( srcItemType == PEFile::PEResourceItem::eType::DATA )
+        {
+            const PEFile::PEResourceInfo *srcDataItem = (const PEFile::PEResourceInfo*)srcItem;
+
+            PEFile::PEResourceInfo dataItem(
+                srcItem->hasIdentifierName, srcDataItem->name, srcDataItem->identifier,
+                calcRedirRef( srcDataItem->sectRef )
+            );
+            dataItem.codePage = srcDataItem->codePage;
+            dataItem.reserved = srcDataItem->reserved;
+
+            itemOut = new PEFile::PEResourceInfo( std::move( dataItem ) );
+        }
+        else if ( srcItemType == PEFile::PEResourceItem::eType::DIRECTORY )
+        {
+            const PEFile::PEResourceDir *srcDirItem = (const PEFile::PEResourceDir*)srcItem;
+
+            PEFile::PEResourceDir dirItem(
+                srcItem->hasIdentifierName, srcDirItem->name, srcDirItem->identifier
+            );
+            dirItem.characteristics = srcDirItem->characteristics;
+            dirItem.timeDateStamp = srcDirItem->timeDateStamp;
+            dirItem.majorVersion = srcDirItem->majorVersion;
+            dirItem.minorVersion = srcDirItem->minorVersion;
+
+            // We have to clone all sub directories.
+            for ( const PEFile::PEResourceItem *srcItemChild : srcDirItem->children )
+            {
+                PEFile::PEResourceItem *newItem = CloneResourceItem( calcRedirRef, srcItemChild );
+
+                try
+                {
+                    dirItem.children.push_back( newItem );
+                }
+                catch( ... )
+                {
+                    delete newItem;
+                    
+                    throw;
+                }
+            }
+
+            itemOut = new PEFile::PEResourceDir( std::move( dirItem ) );
+        }
+        else
+        {
+            assert( 0 );
+        }
+
+        return itemOut;
+    }
+};
+
 int main( int argc, char *argv[] )
 {
     std::cout <<
@@ -571,6 +736,8 @@ int main( int argc, char *argv[] )
 
             // Embed all import directories.
             size_t oldImpDirCount = exeImage.imports.size();
+
+            if ( moduleImage.imports.empty() == false )
             {
                 std::cout << "embedding import directories" << std::endl;
 
@@ -587,37 +754,18 @@ int main( int argc, char *argv[] )
                     std::cout << "* " << impDesc.DLLName << std::endl;
 
                     // Take over all import entries from the module.
-                    size_t modImpCount = impDesc.funcs.size();
+                    newImports.funcs = PEFile::PEImportDesc::CreateEquivalentImportsList( impDesc.funcs );
 
-                    for ( size_t n = 0; n < modImpCount; n++ )
-                    {
-                        const PEFile::PEImportDesc::importFunc& impFunc = impDesc.funcs[ n ];
-
-                        PEFile::PEImportDesc::importFunc carbonCopy;
-                        carbonCopy.isOrdinalImport = impFunc.isOrdinalImport;
-                        carbonCopy.name = impFunc.name;
-                        carbonCopy.ordinal_hint = impFunc.ordinal_hint;
-
-                        newImports.funcs.push_back( std::move( carbonCopy ) );
-                    }
+                    //TODO: optimize this by acknowledging the allocations of DLLName and funcs inside of the redirected sections.
 
                     // Since we are spreading thunk IATs across the executable image we cannot
                     // use the Win32 PE loader feature to store them in read-only sections.
                     // We have to bundle all IATs in one place to do that.
                     // Solution: make the section of the IAT writable (hack!)
 
-                    auto findIter = sectLinkMap.find( impDesc.firstThunkRef.GetSection() );
+                    newImports.firstThunkRef = calcRedirRef( impDesc.firstThunkRef );
 
-                    assert( findIter != sectLinkMap.end() );
-
-                    PEFile::PESection *modRedirSect = findIter->second.GetSection();
-
-                    modRedirSect->chars.sect_mem_write = true;
-
-                    PEFile::PESectionDataReference newThunkRef( modRedirSect, impDesc.firstThunkRef.GetSectionOffset() );
-
-                    // Remember this.
-                    newImports.firstThunkRef = std::move( newThunkRef );
+                    newImports.firstThunkRef.GetSection()->chars.sect_mem_write = true;
 
                     exeImage.imports.push_back( std::move( newImports ) );
                 }
@@ -627,6 +775,52 @@ int main( int argc, char *argv[] )
             }
 
             // Just for the heck of it we could embed exports aswell.
+
+            // Embed delay import directories aswell.
+            if ( moduleImage.delayLoads.empty() == false )
+            {
+                std::cout << "embedding delay-load import directories" << std::endl;
+
+                // We do it just like for the regular imports.
+                for ( const PEFile::PEDelayLoadDesc& impDesc : moduleImage.delayLoads )
+                {
+                    PEFile::PEDelayLoadDesc newImports;
+                    newImports.attrib = impDesc.attrib;
+                    newImports.DLLName = impDesc.DLLName;
+                    newImports.DLLHandleRef = calcRedirRef( impDesc.DLLHandleRef );
+                    
+                    // The IAT always needs special handling.
+                    newImports.IATRef = calcRedirRef( impDesc.IATRef );
+
+                    newImports.IATRef.GetSection()->chars.sect_mem_write = true;
+
+                    newImports.importNames = PEFile::PEImportDesc::CreateEquivalentImportsList( impDesc.importNames );
+                    newImports.boundImportAddrTableRef = calcRedirRef( impDesc.boundImportAddrTableRef );
+                    newImports.unloadInfoTableRef = calcRedirRef( impDesc.unloadInfoTableRef );
+                    newImports.timeDateStamp = impDesc.timeDateStamp;
+
+                    //TODO: optimize this by acknowledging the allocations of DLLName and importNames in the redirected sections.
+
+                    // Take it over.
+                    exeImage.delayLoads.push_back( std::move( newImports ) );
+                }
+            }
+
+            // Copy over the resources aswell.
+            if ( moduleImage.resourceRoot.children.empty() == false )
+            {
+                std::cout << "embedding module resources" << std::endl;
+
+                // We merge things.
+                bool hasChanged =
+                    resourceHelpers <decltype(calcRedirRef)>::EmbedResourceDirectoryInto( std::wstring(), calcRedirRef, exeImage.resourceRoot, moduleImage.resourceRoot );
+
+                if ( hasChanged )
+                {
+                    // Need to write new resource data directory.
+                    exeImage.resAllocEntry = PEFile::PESectionAllocation();
+                }
+            }
 
             bool hasStaticTLS = ( moduleImage.tlsInfo.addressOfIndexRef.GetSection() != NULL );
         
