@@ -15,6 +15,18 @@
 // We need PE image structures due to Win32 image loading behavior.
 #include "peloader.serialize.h"
 
+struct runtime_exception
+{
+    inline runtime_exception( int error_code, const char *msg )
+    {
+        this->msg = msg;
+        this->error_code = error_code;
+    }
+
+    const char *msg;
+    int error_code;
+};
+
 // Creates a redirection reference between modules.
 inline PEFile::PESectionDataReference RedirectionRef(
     const PEFile::PESectionDataReference& srcRef, PEFile::PESection *targetSect )
@@ -397,7 +409,10 @@ static int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage )
         {
             PEFile::PESection *srcSect = srcRef.GetSection();
 
-            assert( srcSect != NULL );
+            if ( srcSect == NULL )
+            {
+                return PEFile::PESectionDataReference();
+            }
 
             // We know that we embedded ALL sections into the executable.
             // So we should be able to find for all sections a representation.
@@ -414,7 +429,10 @@ static int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage )
         {
             PEFile::PESection *srcSect = srcRef.GetSection();
 
-            assert( srcSect != NULL );
+            if ( srcSect == NULL )
+            {
+                throw runtime_exception( -20, "attempt to resolve unbound RVA" );
+            }
 
             // We know that we embedded ALL sections into the executable.
             // So we should be able to find for all sections a representation.
@@ -471,9 +489,7 @@ static int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage )
 
             if ( refInside == NULL )
             {
-                std::cout << "fatal: failed to allocate module section in executable image" << std::endl;
-
-                exit( -14 );
+                throw runtime_exception( -14, "fatal: failed to allocate module section in executable image" );
             }
 
             PEFile::PESectionReference sectInsideRef( refInside );
@@ -684,8 +700,6 @@ static int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage )
         std::uint32_t thunkEntrySize = archPointerSize;
 
         // Embed all import directories.
-        size_t oldImpDirCount = exeImage.imports.size();
-
         if ( moduleImage.imports.empty() == false )
         {
             std::cout << "embedding import directories" << std::endl;
@@ -724,6 +738,43 @@ static int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage )
         }
 
         // Just for the heck of it we could embed exports aswell.
+        if ( moduleImage.exportDir.functions.empty() == false )
+        {
+            std::cout << "embedding export functions" << std::endl;
+
+            // First just take over exports.
+            size_t ordInputBase = exeImage.exportDir.functions.size();
+
+            for ( const PEFile::PEExportDir::func& expEntry : moduleImage.exportDir.functions )
+            {
+                PEFile::PEExportDir::func newExpEntry;
+                newExpEntry.expRef = calcRedirRef( expEntry.expRef );
+                newExpEntry.forwarder = expEntry.forwarder;
+                newExpEntry.isForwarder = expEntry.isForwarder;
+
+                // Add it to our exports.
+                exeImage.exportDir.functions.push_back( std::move( newExpEntry ) );
+            }
+
+            // Next put all the name mappings, too.
+            for ( const auto& nameMapIter : moduleImage.exportDir.funcNameMap )
+            {
+                const PEFile::PEExportDir::mappedName& nameMap = nameMapIter.first;
+
+                size_t funcOrd = ( ordInputBase + nameMapIter.second );
+
+                // Just take it over.
+                PEFile::PEExportDir::mappedName newNameMap;
+                newNameMap.name = nameMap.name;
+                //TODO: take over the name allocation in the future aswell.
+                exeImage.exportDir.funcNameMap.insert( std::make_pair( std::move( newNameMap ), funcOrd ) );
+            }
+
+            // Rewrite things.
+            exeImage.exportDir.allocEntry = PEFile::PESectionAllocation();
+            exeImage.exportDir.funcAddressAllocEntry = PEFile::PESectionAllocation();
+            exeImage.exportDir.funcNamesAllocEntry = PEFile::PESectionAllocation();
+        }
 
         // Embed delay import directories aswell.
         if ( moduleImage.delayLoads.empty() == false )
@@ -1074,8 +1125,18 @@ static int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage )
             }
         }
 
+        // Check if we even have an entry point.
+        const PEFile::PESectionDataReference& modEntryPointRef = moduleImage.peOptHeader.addressOfEntryPointRef;
+
+        if ( modEntryPointRef.GetSection() == NULL )
+        {
+            std::cout << "error: no entry point in given module (no point in embedding)" << std::endl;
+
+            return -19;
+        }
+
         // Call into the DLL entry point with the default parameters.
-        std::uint32_t rvaToDLLEntryPoint = calcRedirRVA( moduleImage.peOptHeader.addressOfEntryPointRef );
+        std::uint32_t rvaToDLLEntryPoint = calcRedirRVA( modEntryPointRef );
         {
             std::uint32_t paramReserved = 0;
             std::uint32_t paramReason = DLL_PROCESS_ATTACH;
@@ -1288,9 +1349,17 @@ int main( int argc, char *argv[] )
     }
     catch( peframework_exception& except )
     {
-        std::cout << "error: " << except.desc_str();
+        std::cout << "error: " << except.desc_str() << std::endl;
 
         iReturnCode = -42;
+
+        // Continue.
+    }
+    catch( runtime_exception& except )
+    {
+        std::cout << except.msg << std::endl;
+
+        iReturnCode = except.error_code;
 
         // Continue.
     }
