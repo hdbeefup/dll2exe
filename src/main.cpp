@@ -12,6 +12,8 @@
 
 #include <asmjitshared.h>
 
+#include "option.h"
+
 // We need PE image structures due to Win32 image loading behavior.
 #include "peloader.serialize.h"
 
@@ -291,7 +293,7 @@ struct resourceHelpers
     }
 };
 
-static int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage )
+static int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage, bool doFixEntryPoint )
 {
     // moduleImage cannot be const because we seek inside of its sections.
 
@@ -394,7 +396,39 @@ static int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage )
 
     // Generate code along with binding.
     {
-        asmjit::X86Assembler x86_asm( &asmCodeHolder );
+        struct MightyAssembler : public asmjit::X86Assembler
+        {
+            inline MightyAssembler( asmjit::CodeHolder *codeHolder ) : X86Assembler( codeHolder )
+            {
+                return;
+            }
+
+            void onEmitMemoryAbsOp( std::uint32_t sectIdx, size_t sectOff, std::int64_t immVal, size_t immLen ) override
+            {
+#ifdef _DEBUG
+                if ( immLen != 4 && immLen != 8 )
+                {
+                    __debugbreak();
+                }
+#endif //_DEBUG
+
+                // We spawn an abs2abs relocation entry.
+                asmjit::CodeHolder *code = this->getCode();
+
+                asmjit::RelocEntry *reloc = NULL;
+                code->newRelocEntry( &reloc, asmjit::RelocEntry::kTypeAbsToAbs, (std::uint32_t)immLen );
+
+                if ( reloc )
+                {
+                    // Fill in things.
+                    reloc->_data = immVal;
+                    reloc->_sourceSectionId = sectIdx;
+                    reloc->_sourceOffset = sectOff;
+                }
+            }
+        };
+
+        MightyAssembler x86_asm( &asmCodeHolder );
 
         // Perform binding of PE references.
         // We keep a list of all sections that we put into the executable image.
@@ -927,6 +961,154 @@ static int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage )
 
         // TODO: generate all code that depends on RVAs over here.
 
+        // User could have requested to fix the entry point in the original executable to the previous
+        // one because it is used for version detection by some executable logic.
+        if ( doFixEntryPoint )
+        {
+            std::cout << "adjusting executable entry point to old on startup ..." << std::endl;
+
+            PEFile::PESection metaSection;
+            metaSection.shortName = ".meta";
+            metaSection.chars.sect_mem_write = true;
+
+            // Determine the size of a thunk entry.
+            // It depends on the image type.
+            size_t thunkEntrySize;
+
+            if ( exeImage.isExtendedFormat )
+            {
+                thunkEntrySize = 8;
+            }
+            else
+            {
+                thunkEntrySize = 4;
+            }
+
+            // We must allocate certain functions that we should use for memory management.
+            PEFile::PESectionAllocation utilThunk;
+            {
+                PEFile::PEImportDesc utilImports;
+                utilImports.DLLName = "KERNEL32.DLL";
+                {
+                    PEFile::PEImportDesc::importFunc fVirtualProtect;
+                    fVirtualProtect.name = "VirtualProtect";
+                    fVirtualProtect.isOrdinalImport = false;
+                    fVirtualProtect.ordinal_hint = 0;
+                    utilImports.funcs.push_back( std::move( fVirtualProtect ) );
+                }
+
+                // Give it some memory region.
+                size_t utilThunkSize = ( thunkEntrySize * utilImports.funcs.size() );
+
+                metaSection.Allocate( utilThunk, (std::uint32_t)utilThunkSize, (std::uint32_t)thunkEntrySize );
+
+                // We want to link the thunk into the imports desc.
+                utilImports.firstThunkRef = utilThunk;
+
+                exeImage.imports.push_back( std::move( utilImports ) );
+            }
+            
+            if ( metaSection.IsEmpty() == false )
+            {
+                metaSection.Finalize();
+
+                exeImage.AddSection( std::move( metaSection ) );
+            }
+
+            // Now since we have module RVAs for the util imports, we
+            // can generate code that uses them.
+            // Unprotect the beginning of the image, write the original executable
+            // entry point into the PE optional header and protect it again.
+            // We assume that the type of image (PE32 or PE32+) will never change.
+            // Unless you are a PE hacker and want to create that tool.
+
+            // Unprotect the first 1024 bytes of the image.
+            if ( genCodeArch == asmjit::ArchInfo::kTypeX86 )
+            {
+                x86_asm.sub( asmjit::x86::esp, 4 );
+                x86_asm.push( asmjit::x86::esp );
+                x86_asm.push( (std::uint32_t)PAGE_READWRITE );
+                x86_asm.push( (std::uint32_t)1024 );
+                x86_asm.push( asmjit::Imm( 0, true ) );
+            }
+            else if ( genCodeArch == asmjit::ArchInfo::kTypeX64 )
+            {
+                x86_asm.sub( asmjit::x86::rsp, 16 );
+                x86_asm.mov( asmjit::x86::rcx, asmjit::Imm( 0, true ) );
+                x86_asm.mov( asmjit::x86::rdx, 1024u );
+                x86_asm.mov( asmjit::x86::r8, (std::uint32_t)PAGE_READWRITE );
+                x86_asm.mov( asmjit::x86::r9, asmjit::x86::rsp );
+            }
+            else
+            {
+                assert( 0 );
+
+                return -1;
+            }
+
+            // Call the thunk function directly.
+            asmjit::X86Mem fVirtualProtect( utilThunk.ResolveOffset( 0 ), (std::uint32_t)thunkEntrySize );
+
+            x86_asm.call( fVirtualProtect );
+
+            // Fix entry point with old.
+            x86_asm.mov( x86_asm.zax(), asmjit::X86Mem( offsetof(PEStructures::IMAGE_DOS_HEADER, e_lfanew), sizeof(std::int32_t) ) );
+
+            std::uint32_t structEP_off;
+
+            if ( exeImage.isExtendedFormat )
+            {
+                structEP_off = offsetof(PEStructures::IMAGE_OPTIONAL_HEADER64, AddressOfEntryPoint);
+            }
+            else
+            {
+                structEP_off = offsetof(PEStructures::IMAGE_OPTIONAL_HEADER32, AddressOfEntryPoint);
+            }
+
+            // We need to skip some data.
+            structEP_off += sizeof(PEStructures::IMAGE_PE_HEADER) + sizeof(std::uint16_t);
+
+            x86_asm.add( x86_asm.zax(), asmjit::Imm( 0, true ) );
+            x86_asm.mov( asmjit::X86Mem( x86_asm.zax(), structEP_off, 4 ), exeImage.peOptHeader.addressOfEntryPointRef.GetRVA() );
+
+            // Protect the memory again.
+            if ( genCodeArch == asmjit::ArchInfo::kTypeX86 )
+            {
+                x86_asm.push( asmjit::x86::esp );
+                x86_asm.push( asmjit::X86Mem( asmjit::x86::esp, 4, 4 ) );
+                x86_asm.push( (std::uint32_t)1024 );
+                x86_asm.push( asmjit::Imm( 0, true ) );
+            }
+            else if ( genCodeArch == asmjit::ArchInfo::kTypeX64 )
+            {
+                x86_asm.mov( asmjit::x86::rcx, asmjit::Imm( 0, true ) );
+                x86_asm.mov( asmjit::x86::rdx, asmjit::X86Mem( asmjit::x86::rsp, 0, 4 ) );
+                x86_asm.mov( asmjit::x86::r8, 1024u );
+                x86_asm.mov( asmjit::x86::r9, asmjit::x86::rsp );
+            }
+            else
+            {
+                assert( 0 );
+            }
+
+            // Call the thunk function directly.
+            x86_asm.call( fVirtualProtect );
+
+            // Release stack space for the oldProt variable.
+            if ( genCodeArch == asmjit::ArchInfo::kTypeX86 )
+            {
+                x86_asm.add( asmjit::x86::esp, 4 );
+            }
+            else if ( genCodeArch == asmjit::ArchInfo::kTypeX64 )
+            {
+                x86_asm.add( asmjit::x86::rsp, 16 );
+            }
+            else
+            {
+                assert( 0 );
+            }
+        }
+
         // Do we need TLS data?
         if ( moduleImage.tlsInfo.startOfRawDataRef.GetSection() != NULL )
         {
@@ -1014,8 +1196,15 @@ static int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage )
             // http://www.geoffchappell.com/studies/windows/win32/ntdll/structs/teb/index.htm
             // But to keep things simple we ain't gonna do that.
 
+            // TODO: since this Kobalicek dude does not provide a good way to get abs2abs relocation
+            //  entries (he is incapable to understand the concept) we have a bug here. the only way to
+            //  properly solve this is to patch asmjit itself, make it put an optional abs2abs entry
+            //  per X86Mov (on demand, with a flag).
+            // TODO: hacked around asmjit to get something automatic; might want to share with the author of
+            //  asmjit.
+
             x86_asm.xor_( x86_asm.zax(), x86_asm.zax() ),
-            x86_asm.mov( asmjit::X86Mem( exeModuleBase + embedImageBaseOffset + moduleImage.tlsInfo.addressOfIndexRef.GetRVA() ), x86_asm.zax() );
+            x86_asm.mov( asmjit::X86Mem( embedImageBaseOffset + moduleImage.tlsInfo.addressOfIndexRef.GetRVA() ), x86_asm.zax() );
         }
 
         // Need this param for initializers.
@@ -1206,9 +1395,40 @@ int main( int argc, char *argv[] )
         "pefrmdllembed - Inject DLL file into EXE file, compiled on " __DATE__ << std::endl
      << "visit http://pefrm-units.osdn.jp/pefrmdllembed.html" << std::endl << std::endl;
 
-    // Syntax: pefrmdllembed.exe *input exe filename* *input mod1 filename* *input mod2 filename* ... *input modn filename* *output exe filename*
+    // Syntax: pefrmdllembed.exe *OPTIONS* *input exe filename* *input mod1 filename* *input mod2 filename* ... *input modn filename* *output exe filename*
 
-    int curArg = 1;
+    size_t curArg = 1;
+
+    bool doFixEntryPoint = false;
+
+    if ( argc >= 1 )
+    {
+        // Parse all options.
+        OptionParser optParser( (const char**)argv + curArg, (size_t)argc - curArg );
+
+        while ( true )
+        {
+            std::string opt = optParser.FetchOption();
+
+            if ( opt.empty() )
+                break;
+
+            if ( opt == "entryfix" || opt == "efix" )
+            {
+                doFixEntryPoint = true;
+            }
+            else
+            {
+                std::cout << "unknown cmdline option: " << opt << std::endl;
+            }
+        }
+
+        size_t optArgIndex = optParser.GetArgIndex();
+
+        curArg += optArgIndex;
+
+        argc -= (int)optArgIndex;
+    }
 
     // Fetch possible input executable and input module from arguments.
     const char *inputExecImageName = "input.exe";
@@ -1265,6 +1485,10 @@ int main( int argc, char *argv[] )
         std::cout << std::endl << std::endl;
     }
 
+    // TODO: create a code building environment and make the DLL embedding a method of it.
+    //  This should optimize the code generation output, which in terms reduces the section
+    //  throughput (good due to Windows NT loader limits).
+
     int iReturnCode;
 
     try
@@ -1312,7 +1536,7 @@ int main( int argc, char *argv[] )
             }
 
             // Perform the embedding.
-            int statusEmbed = EmbedModuleIntoExecutable( exeImage, moduleImage );
+            int statusEmbed = EmbedModuleIntoExecutable( exeImage, moduleImage, doFixEntryPoint );
 
             if ( statusEmbed != 0 )
             {
