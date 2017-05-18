@@ -293,143 +293,80 @@ struct resourceHelpers
     }
 };
 
-static int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage, bool doFixEntryPoint )
+struct AssemblyEnvironment
 {
-    // moduleImage cannot be const because we seek inside of its sections.
-
-    // Check that both images are of same machine type.
-    std::uint16_t exeMachineType = exeImage.pe_finfo.machine_id;
-    std::uint16_t modMachineType = moduleImage.pe_finfo.machine_id;
-
-    if ( exeMachineType != modMachineType )
+    struct MightyAssembler : public asmjit::X86Assembler
     {
-        std::cout << "machine types of images do not match" << std::endl;
-
-        return -3;
-    }
-
-    // We only support x86 and x64 for now.
-    if ( exeMachineType != PEL_IMAGE_FILE_MACHINE_I386 && exeMachineType != PEL_IMAGE_FILE_MACHINE_AMD64 )
-    {
-        std::cout << "unsupported machine type (x86 or x64 only)" << std::endl;
-
-        return -4;
-    }
-
-    // Check that the module is a DLL and the executable is an EXE.
-    if ( exeImage.pe_finfo.isDLL != false )
-    {
-        std::cout << "provided executable image is not an executable image" << std::endl;
-
-        return -5;
-    }
-
-    if ( moduleImage.pe_finfo.isDLL != true )
-    {
-        std::cout << "provided DLL image is not a DLL image" << std::endl;
-
-        return -6;
-    }
-
-    // Get required meta-data.
-    std::uint64_t exeModuleBase = exeImage.GetImageBase();
-
-    // Decide what architecture we generate code for.
-    std::uint8_t genCodeArch = asmjit::ArchInfo::kTypeNone;
-
-    std::uint32_t archPointerSize;
-
-    if ( exeMachineType == PEL_IMAGE_FILE_MACHINE_I386 )
-    {
-        genCodeArch = asmjit::ArchInfo::kTypeX86;
-
-        archPointerSize = 4;
-
-        std::cout << "architecture: 32bit" << std::endl;
-    }
-    else if ( exeMachineType == PEL_IMAGE_FILE_MACHINE_AMD64 )
-    {
-        genCodeArch = asmjit::ArchInfo::kTypeX64;
-
-        archPointerSize = 8;
-
-        std::cout << "architecture: 64bit" << std::endl;
-    }
-    else
-    {
-        std::cout << "invalid machine type for asmjit code generation" << std::endl;
-
-        return -7;
-    }
-
-    // The DLL module must be relocatable, if 32bit.
-    // If 64bit then the module could be compiled RIP-relative, which is ok.
-    if ( modMachineType == PEL_IMAGE_FILE_MACHINE_I386 )
-    {
-        if ( moduleImage.HasRelocationInfo() == false )
+        inline MightyAssembler( asmjit::CodeHolder *codeHolder ) : X86Assembler( codeHolder )
         {
-            std::cout << "DLL image is not relocatable (x86 requirement)" << std::endl;
-
-            return -11;
+            return;
         }
+
+        void onEmitMemoryAbsOp( std::uint32_t sectIdx, size_t sectOff, std::int64_t immVal, size_t immLen ) override
+        {
+            // We spawn an abs2abs relocation entry.
+            asmjit::CodeHolder *code = this->getCode();
+
+            asmjit::RelocEntry *reloc = NULL;
+            code->newRelocEntry( &reloc, asmjit::RelocEntry::kTypeAbsToAbs, (std::uint32_t)immLen );
+
+            if ( reloc )
+            {
+                // Fill in things.
+                reloc->_data = immVal;
+                reloc->_sourceSectionId = sectIdx;
+                reloc->_sourceOffset = sectOff;
+            }
+        }
+    };
+
+    MightyAssembler x86_asm;
+
+    inline AssemblyEnvironment( asmjit::CodeHolder *codeHolder )
+        : x86_asm( codeHolder )
+    {
+        return;
     }
 
-    // Check if we have to embed any new relocations.
-    bool requiresRelocations = ( exeImage.HasRelocationInfo() == true );
-
-    // We need the module image base for rebase pointer fixing.
-    std::uint64_t modImageBase = moduleImage.GetImageBase();
-
-    // Special allocations of data inside the executable image that cannot be stored in
-    // the executable itself.
-    std::list <PEFile::PESectionAllocation> exeModuleAllocs;
-
-    // We want to generate specialized code as executable entry point.
-    // This allows us to do specialized patching according to rules of PE merging.
-    asmjit::CodeInfo asmCodeInfo( genCodeArch );
-
-    asmjit::CodeHolder asmCodeHolder;
-    asmCodeHolder.init( asmCodeInfo );
-
-    // We need to remember a label of the entry point.
-    asmjit::Label entryPointLabel;
-
-    // Generate code along with binding.
+    inline ~AssemblyEnvironment( void )
     {
-        struct MightyAssembler : public asmjit::X86Assembler
+        return;
+    }
+
+    inline int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage, bool requiresRelocations, std::uint32_t archPointerSize )
+    {
+        // moduleImage cannot be const because we seek inside of its sections.
+
+        // Check that the module is a DLL.
+        if ( moduleImage.pe_finfo.isDLL != true )
         {
-            inline MightyAssembler( asmjit::CodeHolder *codeHolder ) : X86Assembler( codeHolder )
+            std::cout << "provided DLL image is not a DLL image" << std::endl;
+
+            return -6;
+        }
+
+        // Decide what architecture we generate code for.
+        std::uint32_t genCodeArch = this->x86_asm.getArchInfo().getType();
+
+        std::uint16_t modMachineType = moduleImage.pe_finfo.machine_id;
+
+        // The DLL module must be relocatable, if 32bit.
+        // If 64bit then the module could be compiled RIP-relative, which is ok.
+        if ( modMachineType == PEL_IMAGE_FILE_MACHINE_I386 )
+        {
+            if ( moduleImage.HasRelocationInfo() == false )
             {
-                return;
+                std::cout << "DLL image is not relocatable (x86 requirement)" << std::endl;
+
+                return -11;
             }
+        }
 
-            void onEmitMemoryAbsOp( std::uint32_t sectIdx, size_t sectOff, std::int64_t immVal, size_t immLen ) override
-            {
-#ifdef _DEBUG
-                if ( immLen != 4 && immLen != 8 )
-                {
-                    __debugbreak();
-                }
-#endif //_DEBUG
+        // We need the module image base for rebase pointer fixing.
+        std::uint64_t modImageBase = moduleImage.GetImageBase();
 
-                // We spawn an abs2abs relocation entry.
-                asmjit::CodeHolder *code = this->getCode();
-
-                asmjit::RelocEntry *reloc = NULL;
-                code->newRelocEntry( &reloc, asmjit::RelocEntry::kTypeAbsToAbs, (std::uint32_t)immLen );
-
-                if ( reloc )
-                {
-                    // Fill in things.
-                    reloc->_data = immVal;
-                    reloc->_sourceSectionId = sectIdx;
-                    reloc->_sourceOffset = sectOff;
-                }
-            }
-        };
-
-        MightyAssembler x86_asm( &asmCodeHolder );
-
+        // Generate code along with binding.
+        
         // Perform binding of PE references.
         // We keep a list of all sections that we put into the executable image.
         // This is important to transfer all the remaining data that is tied to sections.
@@ -531,6 +468,8 @@ static int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage, boo
             // Remember this link.
             sectLinkMap[ theSect ] = std::move( sectInsideRef );
         });
+
+        std::uint64_t exeModuleBase = exeImage.GetImageBase();
 
         // We need to create a special PESection that contains the DLL image PE headers,
         // called ".pedata".
@@ -729,9 +668,6 @@ static int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage, boo
                 }
             }
         }
-
-        // Decide about the thunk entry size.
-        std::uint32_t thunkEntrySize = archPointerSize;
 
         // Embed all import directories.
         if ( moduleImage.imports.empty() == false )
@@ -945,169 +881,7 @@ static int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage, boo
             }
         }
 
-        // Now the entry point starts.
-        entryPointLabel = x86_asm.newLabel();
-
-        if ( genCodeArch == asmjit::ArchInfo::kTypeX64 )
-        {
-            // Align the stack pointer.
-            x86_asm.mov( asmjit::x86::rax, asmjit::x86::rsp );
-            x86_asm.and_( asmjit::x86::rax, 0x0F );
-            x86_asm.sub( asmjit::x86::rsp, asmjit::x86::rax );
-
-            // Reserve register spill space.
-            x86_asm.sub( asmjit::x86::rsp, 0x20 );
-        }
-
         // TODO: generate all code that depends on RVAs over here.
-
-        // User could have requested to fix the entry point in the original executable to the previous
-        // one because it is used for version detection by some executable logic.
-        if ( doFixEntryPoint )
-        {
-            std::cout << "adjusting executable entry point to old on startup ..." << std::endl;
-
-            PEFile::PESection metaSection;
-            metaSection.shortName = ".meta";
-            metaSection.chars.sect_mem_write = true;
-
-            // Determine the size of a thunk entry.
-            // It depends on the image type.
-            size_t thunkEntrySize;
-
-            if ( exeImage.isExtendedFormat )
-            {
-                thunkEntrySize = 8;
-            }
-            else
-            {
-                thunkEntrySize = 4;
-            }
-
-            // We must allocate certain functions that we should use for memory management.
-            PEFile::PESectionAllocation utilThunk;
-            {
-                PEFile::PEImportDesc utilImports;
-                utilImports.DLLName = "KERNEL32.DLL";
-                {
-                    PEFile::PEImportDesc::importFunc fVirtualProtect;
-                    fVirtualProtect.name = "VirtualProtect";
-                    fVirtualProtect.isOrdinalImport = false;
-                    fVirtualProtect.ordinal_hint = 0;
-                    utilImports.funcs.push_back( std::move( fVirtualProtect ) );
-                }
-
-                // Give it some memory region.
-                size_t utilThunkSize = ( thunkEntrySize * utilImports.funcs.size() );
-
-                metaSection.Allocate( utilThunk, (std::uint32_t)utilThunkSize, (std::uint32_t)thunkEntrySize );
-
-                // We want to link the thunk into the imports desc.
-                utilImports.firstThunkRef = utilThunk;
-
-                exeImage.imports.push_back( std::move( utilImports ) );
-            }
-            
-            if ( metaSection.IsEmpty() == false )
-            {
-                metaSection.Finalize();
-
-                exeImage.AddSection( std::move( metaSection ) );
-            }
-
-            // Now since we have module RVAs for the util imports, we
-            // can generate code that uses them.
-            // Unprotect the beginning of the image, write the original executable
-            // entry point into the PE optional header and protect it again.
-            // We assume that the type of image (PE32 or PE32+) will never change.
-            // Unless you are a PE hacker and want to create that tool.
-
-            // Unprotect the first 1024 bytes of the image.
-            if ( genCodeArch == asmjit::ArchInfo::kTypeX86 )
-            {
-                x86_asm.sub( asmjit::x86::esp, 4 );
-                x86_asm.push( asmjit::x86::esp );
-                x86_asm.push( (std::uint32_t)PAGE_READWRITE );
-                x86_asm.push( (std::uint32_t)1024 );
-                x86_asm.push( asmjit::Imm( 0, true ) );
-            }
-            else if ( genCodeArch == asmjit::ArchInfo::kTypeX64 )
-            {
-                x86_asm.sub( asmjit::x86::rsp, 16 );
-                x86_asm.mov( asmjit::x86::rcx, asmjit::Imm( 0, true ) );
-                x86_asm.mov( asmjit::x86::rdx, 1024u );
-                x86_asm.mov( asmjit::x86::r8, (std::uint32_t)PAGE_READWRITE );
-                x86_asm.mov( asmjit::x86::r9, asmjit::x86::rsp );
-            }
-            else
-            {
-                assert( 0 );
-
-                return -1;
-            }
-
-            // Call the thunk function directly.
-            asmjit::X86Mem fVirtualProtect( utilThunk.ResolveOffset( 0 ), (std::uint32_t)thunkEntrySize );
-
-            x86_asm.call( fVirtualProtect );
-
-            // Fix entry point with old.
-            x86_asm.mov( x86_asm.zax(), asmjit::X86Mem( offsetof(PEStructures::IMAGE_DOS_HEADER, e_lfanew), sizeof(std::int32_t) ) );
-
-            std::uint32_t structEP_off;
-
-            if ( exeImage.isExtendedFormat )
-            {
-                structEP_off = offsetof(PEStructures::IMAGE_OPTIONAL_HEADER64, AddressOfEntryPoint);
-            }
-            else
-            {
-                structEP_off = offsetof(PEStructures::IMAGE_OPTIONAL_HEADER32, AddressOfEntryPoint);
-            }
-
-            // We need to skip some data.
-            structEP_off += sizeof(PEStructures::IMAGE_PE_HEADER) + sizeof(std::uint16_t);
-
-            x86_asm.add( x86_asm.zax(), asmjit::Imm( 0, true ) );
-            x86_asm.mov( asmjit::X86Mem( x86_asm.zax(), structEP_off, 4 ), exeImage.peOptHeader.addressOfEntryPointRef.GetRVA() );
-
-            // Protect the memory again.
-            if ( genCodeArch == asmjit::ArchInfo::kTypeX86 )
-            {
-                x86_asm.push( asmjit::x86::esp );
-                x86_asm.push( asmjit::X86Mem( asmjit::x86::esp, 4, 4 ) );
-                x86_asm.push( (std::uint32_t)1024 );
-                x86_asm.push( asmjit::Imm( 0, true ) );
-            }
-            else if ( genCodeArch == asmjit::ArchInfo::kTypeX64 )
-            {
-                x86_asm.mov( asmjit::x86::rcx, asmjit::Imm( 0, true ) );
-                x86_asm.mov( asmjit::x86::rdx, asmjit::X86Mem( asmjit::x86::rsp, 0, 4 ) );
-                x86_asm.mov( asmjit::x86::r8, 1024u );
-                x86_asm.mov( asmjit::x86::r9, asmjit::x86::rsp );
-            }
-            else
-            {
-                assert( 0 );
-            }
-
-            // Call the thunk function directly.
-            x86_asm.call( fVirtualProtect );
-
-            // Release stack space for the oldProt variable.
-            if ( genCodeArch == asmjit::ArchInfo::kTypeX86 )
-            {
-                x86_asm.add( asmjit::x86::esp, 4 );
-            }
-            else if ( genCodeArch == asmjit::ArchInfo::kTypeX64 )
-            {
-                x86_asm.add( asmjit::x86::rsp, 16 );
-            }
-            else
-            {
-                assert( 0 );
-            }
-        }
 
         // Do we need TLS data?
         if ( moduleImage.tlsInfo.startOfRawDataRef.GetSection() != NULL )
@@ -1356,38 +1130,10 @@ static int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage, boo
             }
         }
 
-        // We jump to the original executable entry point.
-        x86_asm.jmp( exeImage.peOptHeader.addressOfEntryPointRef.GetRVA() );
-
-        // Finished generating code.
+        // Success!
+        return 0;
     }
-
-    // Commit the code into the buffers.
-    asmCodeHolder.sync();
-
-    // We have to embed all asmjit sections into our executable aswell.
-    {
-        std::cout << "linking asmjit code into executable" << std::endl;
-
-        PEFile::PESectionDataReference entryPointRef;
-        bool couldLinkCode = asmjitshared::EmbedASMJITCodeIntoModule( exeImage, requiresRelocations, asmCodeHolder, entryPointLabel, entryPointRef );
-
-        if ( !couldLinkCode )
-        {
-            std::cout << "failed to link asmjit code into executable" << std::endl;
-
-            return -10;
-        }
-
-        // Make our executable entry point to our newly compiled routine.
-        exeImage.peOptHeader.addressOfEntryPointRef = std::move( entryPointRef );
-
-        // Finito.
-    }
-
-    // Success!
-    return 0;
-}
+};
 
 int main( int argc, char *argv[] )
 {
@@ -1512,42 +1258,304 @@ int main( int argc, char *argv[] )
             exeImage.LoadFromDisk( &peStream );
         }
 
-        // Embed each requested image.
-        for ( unsigned int n = 0; n < numberModules; n++ )
+        // Initialize the environment.
+        std::uint16_t exeMachineType = exeImage.pe_finfo.machine_id;
+
+        // We only support x86 and x64 for now.
+        if ( exeMachineType != PEL_IMAGE_FILE_MACHINE_I386 && exeMachineType != PEL_IMAGE_FILE_MACHINE_AMD64 )
         {
-            const char *inputModImageName = toEmbedList[ n ];
+            throw runtime_exception( -4, "unsupported machine type (x86 or x64 only)" );
+        }
 
-            PEFile moduleImage;
+        // Check that the executable is an EXE.
+        if ( exeImage.pe_finfo.isDLL != false )
+        {
+            throw runtime_exception( -5, "provided executable image is not an executable image" );
+        }
+
+        // Decide what architecture we generate code for.
+        std::uint8_t genCodeArch = asmjit::ArchInfo::kTypeNone;
+
+        std::uint32_t archPointerSize;
+
+        if ( exeMachineType == PEL_IMAGE_FILE_MACHINE_I386 )
+        {
+            genCodeArch = asmjit::ArchInfo::kTypeX86;
+
+            archPointerSize = 4;
+
+            std::cout << "architecture: 32bit" << std::endl;
+        }
+        else if ( exeMachineType == PEL_IMAGE_FILE_MACHINE_AMD64 )
+        {
+            genCodeArch = asmjit::ArchInfo::kTypeX64;
+
+            archPointerSize = 8;
+
+            std::cout << "architecture: 64bit" << std::endl;
+        }
+        else
+        {
+            throw runtime_exception( -7, "invalid machine type for asmjit code generation" );
+        }
+
+        // Check if we have to embed any new relocations.
+        bool requiresRelocations = ( exeImage.HasRelocationInfo() == true );
+
+        // We want to generate specialized code as executable entry point.
+        // This allows us to do specialized patching according to rules of PE merging.
+        asmjit::CodeInfo asmCodeInfo( genCodeArch );
+
+        asmjit::CodeHolder asmCodeHolder;
+        asmCodeHolder.init( asmCodeInfo );
+
+        // We need to remember a label of the entry point.
+        asmjit::Label entryPointLabel;
+        {
+            AssemblyEnvironment asmEnv( &asmCodeHolder );
+
+            asmjit::X86Assembler& x86_asm = asmEnv.x86_asm;
+
+            // Now the entry point starts.
+            entryPointLabel = x86_asm.newLabel();
+
+            if ( genCodeArch == asmjit::ArchInfo::kTypeX64 )
             {
-                std::cout << "loading module image (" << inputModImageName << ")" << std::endl;
+                // Align the stack pointer.
+                x86_asm.mov( asmjit::x86::rax, asmjit::x86::rsp );
+                x86_asm.and_( asmjit::x86::rax, 0x0F );
+                x86_asm.sub( asmjit::x86::rsp, asmjit::x86::rax );
 
-                std::fstream stlFileStream( inputModImageName, std::ios::binary | std::ios::in );
+                // Reserve register spill space.
+                x86_asm.sub( asmjit::x86::rsp, 0x20 );
+            }
 
-                if ( !stlFileStream.good() )
+            // User could have requested to fix the entry point in the original executable to the previous
+            // one because it is used for version detection by some executable logic.
+            if ( doFixEntryPoint )
+            {
+                std::cout << "adjusting executable entry point to old on startup ..." << std::endl;
+
+                PEFile::PESection metaSection;
+                metaSection.shortName = ".meta";
+                metaSection.chars.sect_mem_write = true;
+
+                // Determine the size of a thunk entry.
+                // It depends on the image type.
+                size_t thunkEntrySize;
+
+                if ( exeImage.isExtendedFormat )
                 {
-                    std::cout << "failed to load module image" << std::endl;
-
-                    return -2;
+                    thunkEntrySize = 8;
+                }
+                else
+                {
+                    thunkEntrySize = 4;
                 }
 
-                PEStreamSTL peStream( &stlFileStream );
+                // We must allocate certain functions that we should use for memory management.
+                PEFile::PESectionAllocation utilThunk;
+                {
+                    PEFile::PEImportDesc utilImports;
+                    utilImports.DLLName = "KERNEL32.DLL";
+                    {
+                        PEFile::PEImportDesc::importFunc fVirtualProtect;
+                        fVirtualProtect.name = "VirtualProtect";
+                        fVirtualProtect.isOrdinalImport = false;
+                        fVirtualProtect.ordinal_hint = 0;
+                        utilImports.funcs.push_back( std::move( fVirtualProtect ) );
+                    }
 
-                moduleImage.LoadFromDisk( &peStream );
+                    // Give it some memory region.
+                    size_t utilThunkSize = ( thunkEntrySize * utilImports.funcs.size() );
+
+                    metaSection.Allocate( utilThunk, (std::uint32_t)utilThunkSize, (std::uint32_t)thunkEntrySize );
+
+                    // We want to link the thunk into the imports desc.
+                    utilImports.firstThunkRef = utilThunk;
+
+                    exeImage.imports.push_back( std::move( utilImports ) );
+                }
+            
+                if ( metaSection.IsEmpty() == false )
+                {
+                    metaSection.Finalize();
+
+                    exeImage.AddSection( std::move( metaSection ) );
+                }
+
+                // Now since we have module RVAs for the util imports, we
+                // can generate code that uses them.
+                // Unprotect the beginning of the image, write the original executable
+                // entry point into the PE optional header and protect it again.
+                // We assume that the type of image (PE32 or PE32+) will never change.
+                // Unless you are a PE hacker and want to create that tool.
+
+                // Unprotect the first 1024 bytes of the image.
+                if ( genCodeArch == asmjit::ArchInfo::kTypeX86 )
+                {
+                    x86_asm.sub( asmjit::x86::esp, 4 );
+                    x86_asm.push( asmjit::x86::esp );
+                    x86_asm.push( (std::uint32_t)PAGE_READWRITE );
+                    x86_asm.push( (std::uint32_t)1024 );
+                    x86_asm.push( asmjit::Imm( 0, true ) );
+                }
+                else if ( genCodeArch == asmjit::ArchInfo::kTypeX64 )
+                {
+                    x86_asm.sub( asmjit::x86::rsp, 16 );
+                    x86_asm.mov( asmjit::x86::rcx, asmjit::Imm( 0, true ) );
+                    x86_asm.mov( asmjit::x86::rdx, 1024u );
+                    x86_asm.mov( asmjit::x86::r8, (std::uint32_t)PAGE_READWRITE );
+                    x86_asm.mov( asmjit::x86::r9, asmjit::x86::rsp );
+                }
+                else
+                {
+                    assert( 0 );
+
+                    return -1;
+                }
+
+                // Call the thunk function directly.
+                asmjit::X86Mem fVirtualProtect( utilThunk.ResolveOffset( 0 ), (std::uint32_t)thunkEntrySize );
+
+                x86_asm.call( fVirtualProtect );
+
+                // Fix entry point with old.
+                x86_asm.mov( x86_asm.zax(), asmjit::X86Mem( offsetof(PEStructures::IMAGE_DOS_HEADER, e_lfanew), sizeof(std::int32_t) ) );
+
+                std::uint32_t structEP_off;
+
+                if ( exeImage.isExtendedFormat )
+                {
+                    structEP_off = offsetof(PEStructures::IMAGE_OPTIONAL_HEADER64, AddressOfEntryPoint);
+                }
+                else
+                {
+                    structEP_off = offsetof(PEStructures::IMAGE_OPTIONAL_HEADER32, AddressOfEntryPoint);
+                }
+
+                // We need to skip some data.
+                structEP_off += sizeof(PEStructures::IMAGE_PE_HEADER) + sizeof(std::uint16_t);
+
+                x86_asm.add( x86_asm.zax(), asmjit::Imm( 0, true ) );
+                x86_asm.mov( asmjit::X86Mem( x86_asm.zax(), structEP_off, 4 ), exeImage.peOptHeader.addressOfEntryPointRef.GetRVA() );
+
+                // Protect the memory again.
+                if ( genCodeArch == asmjit::ArchInfo::kTypeX86 )
+                {
+                    x86_asm.push( asmjit::x86::esp );
+                    x86_asm.push( asmjit::X86Mem( asmjit::x86::esp, 4, 4 ) );
+                    x86_asm.push( (std::uint32_t)1024 );
+                    x86_asm.push( asmjit::Imm( 0, true ) );
+                }
+                else if ( genCodeArch == asmjit::ArchInfo::kTypeX64 )
+                {
+                    x86_asm.mov( asmjit::x86::rcx, asmjit::Imm( 0, true ) );
+                    x86_asm.mov( asmjit::x86::rdx, asmjit::X86Mem( asmjit::x86::rsp, 0, 4 ) );
+                    x86_asm.mov( asmjit::x86::r8, 1024u );
+                    x86_asm.mov( asmjit::x86::r9, asmjit::x86::rsp );
+                }
+                else
+                {
+                    assert( 0 );
+                }
+
+                // Call the thunk function directly.
+                x86_asm.call( fVirtualProtect );
+
+                // Release stack space for the oldProt variable.
+                if ( genCodeArch == asmjit::ArchInfo::kTypeX86 )
+                {
+                    x86_asm.add( asmjit::x86::esp, 4 );
+                }
+                else if ( genCodeArch == asmjit::ArchInfo::kTypeX64 )
+                {
+                    x86_asm.add( asmjit::x86::rsp, 16 );
+                }
+                else
+                {
+                    assert( 0 );
+                }
             }
 
-            // Perform the embedding.
-            int statusEmbed = EmbedModuleIntoExecutable( exeImage, moduleImage, doFixEntryPoint );
-
-            if ( statusEmbed != 0 )
+            // Embed each requested image.
+            for ( unsigned int n = 0; n < numberModules; n++ )
             {
-                return statusEmbed;
+                const char *inputModImageName = toEmbedList[ n ];
+
+                PEFile moduleImage;
+                {
+                    std::cout << "loading module image (" << inputModImageName << ")" << std::endl;
+
+                    std::fstream stlFileStream( inputModImageName, std::ios::binary | std::ios::in );
+
+                    if ( !stlFileStream.good() )
+                    {
+                        std::cout << "failed to load module image" << std::endl;
+
+                        return -2;
+                    }
+
+                    PEStreamSTL peStream( &stlFileStream );
+
+                    moduleImage.LoadFromDisk( &peStream );
+                }
+
+                std::uint16_t modMachineType = moduleImage.pe_finfo.machine_id;
+
+                // Check that both images are of same machine type.
+                if ( exeMachineType != modMachineType )
+                {
+                    std::cout << "machine types of images do not match" << std::endl;
+
+                    return -3;
+                }
+
+                // Perform the embedding.
+                int statusEmbed = asmEnv.EmbedModuleIntoExecutable( exeImage, moduleImage, requiresRelocations, archPointerSize );
+
+                if ( statusEmbed != 0 )
+                {
+                    return statusEmbed;
+                }
+
+                // Print some seperation for easier log viewing.
+                if ( n + 1 != numberModules )
+                {
+                    std::cout << std::endl;
+                }
             }
 
-            // Print some seperation for easier log viewing.
-            if ( n + 1 != numberModules )
+            // We jump to the original executable entry point.
+            x86_asm.jmp( exeImage.peOptHeader.addressOfEntryPointRef.GetRVA() );
+
+            // Finished generating code.
+        }
+
+        // Notify that there is now a divide between module code generation and asmjit embedding.
+        std::cout << std::endl;
+
+        // Commit the code into the buffers.
+        asmCodeHolder.sync();
+
+        // We have to embed all asmjit sections into our executable aswell.
+        {
+            std::cout << "linking asmjit code into executable" << std::endl;
+
+            PEFile::PESectionDataReference entryPointRef;
+            bool couldLinkCode = asmjitshared::EmbedASMJITCodeIntoModule( exeImage, requiresRelocations, asmCodeHolder, entryPointLabel, entryPointRef );
+
+            if ( !couldLinkCode )
             {
-                std::cout << std::endl;
+                std::cout << "failed to link asmjit code into executable" << std::endl;
+
+                return -10;
             }
+
+            // Make our executable entry point to our newly compiled routine.
+            exeImage.peOptHeader.addressOfEntryPointRef = std::move( entryPointRef );
+
+            // Finito.
         }
 
         // Write out the new executable image.
