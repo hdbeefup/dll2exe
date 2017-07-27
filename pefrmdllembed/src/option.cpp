@@ -1,4 +1,3 @@
-#include <crtdefs.h>
 #include "option.h"
 
 OptionParser::OptionParser( const char *args[], size_t numArgs )
