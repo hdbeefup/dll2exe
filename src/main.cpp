@@ -17,6 +17,9 @@
 // We need PE image structures due to Win32 image loading behavior.
 #include "peloader.serialize.h"
 
+// Some macros we need.
+#define _PAGE_READWRITE     0x04
+
 struct runtime_exception
 {
     inline runtime_exception( int error_code, const char *msg )
@@ -127,7 +130,7 @@ struct resourceHelpers
         return ( curPath + L"::" + nameToAppend );
     }
 
-    static bool EmbedResourceDirectoryInto( const std::wstring& curPath, calcRedirRef_t& calcRedirRef, PEFile::PEResourceDir& into, const PEFile::PEResourceDir& toEmbed )
+    static bool EmbedResourceDirectoryInto( const std::wstring& curPath, const calcRedirRef_t& calcRedirRef, PEFile::PEResourceDir& into, const PEFile::PEResourceDir& toEmbed )
     {
         bool hasChanged = false;
 
@@ -233,7 +236,7 @@ struct resourceHelpers
     }
 
     // Clones a resource item 
-    static PEFile::PEResourceItem* CloneResourceItem( calcRedirRef_t& calcRedirRef, const PEFile::PEResourceItem *srcItem )
+    static PEFile::PEResourceItem* CloneResourceItem( const calcRedirRef_t& calcRedirRef, const PEFile::PEResourceItem *srcItem )
     {
         PEFile::PEResourceItem *itemOut = NULL;
 
@@ -486,7 +489,7 @@ struct AssemblyEnvironment
 
             // Here we go. We actually do not map worthless stuff.
             PEStructures::IMAGE_DOS_HEADER dosHeader;
-            dosHeader.e_magic = IMAGE_DOS_SIGNATURE;
+            dosHeader.e_magic = PEL_IMAGE_DOS_SIGNATURE;
             dosHeader.e_cblp = 0;
             dosHeader.e_cp = 0;
             dosHeader.e_crlc = 0;
@@ -528,7 +531,7 @@ struct AssemblyEnvironment
 
             // Decide on what architecture we have, and embed the correct optional headers.
             PEStructures::IMAGE_PE_HEADER peHeader;
-            peHeader.Signature = 'EP';
+            peHeader.Signature = PEL_IMAGE_PE_HEADER_SIGNATURE;
             peHeader.FileHeader.Machine = modMachineType;
             peHeader.FileHeader.NumberOfSections = moduleImage.GetSectionCount();
             peHeader.FileHeader.TimeDateStamp = moduleImage.pe_finfo.timeDateStamp;
@@ -542,7 +545,7 @@ struct AssemblyEnvironment
             // Now write the machine dependent stuff.
             if ( moduleImage.isExtendedFormat )
             {
-                pedataSect.stream.WriteUInt16( IMAGE_NT_OPTIONAL_HDR64_MAGIC );
+                pedataSect.stream.WriteUInt16( PEL_IMAGE_NT_OPTIONAL_HDR64_MAGIC );
 
                 PEStructures::IMAGE_OPTIONAL_HEADER64 optHeader;
                 optHeader.MajorLinkerVersion = moduleImage.peOptHeader.majorLinkerVersion;
@@ -579,7 +582,7 @@ struct AssemblyEnvironment
             }
             else
             {
-                pedataSect.stream.WriteUInt16( IMAGE_NT_OPTIONAL_HDR32_MAGIC );
+                pedataSect.stream.WriteUInt16( PEL_IMAGE_NT_OPTIONAL_HDR32_MAGIC );
 
                 PEStructures::IMAGE_OPTIONAL_HEADER32 optHeader;
                 optHeader.MajorLinkerVersion = moduleImage.peOptHeader.majorLinkerVersion;
@@ -634,7 +637,7 @@ struct AssemblyEnvironment
                     [&]( const PEFile::PESection *theSect )
                 {
                     PEStructures::IMAGE_SECTION_HEADER sectHeader;
-                    strncpy( (char*)sectHeader.Name, theSect->shortName.c_str(), _countof(sectHeader.Name) );
+                    strncpy( (char*)sectHeader.Name, theSect->shortName.c_str(), countof(sectHeader.Name) );
                     sectHeader.Misc.VirtualSize = theSect->GetVirtualSize();
                     // we actually have to write the old information!
                     // which is very useless at this point, unless you know what you are doing.
@@ -828,7 +831,7 @@ struct AssemblyEnvironment
 
                     PEFile::PESection *exeRelocSect = findIter->second.GetSection();
 
-                    PEFile::PEBaseReloc::eRelocType relocType = modRelocItem.type;
+                    PEFile::PEBaseReloc::eRelocType relocType = (PEFile::PEBaseReloc::eRelocType)modRelocItem.type;
 
                     // Fix the relocation to the new image base.
                     // For that we have to find out where the target points to and
@@ -928,7 +931,7 @@ struct AssemblyEnvironment
 
                     char *dataBuf = (char*)exeSect->stream.Data();
 
-                    BufferPatternFind( dataBuf, (size_t)exeSect->stream.Size(), _countof(patterns), patterns,
+                    BufferPatternFind( dataBuf, (size_t)exeSect->stream.Size(), countof(patterns), patterns,
                         [&]( size_t patIdx, size_t bufOff, size_t matchSize )
                     {
                         // Just need to put a NOP.
@@ -1062,7 +1065,7 @@ struct AssemblyEnvironment
                 {
                     // Call this function.
                     std::uint32_t paramReserved = 0;
-                    std::uint32_t paramReason = DLL_PROCESS_ATTACH;
+                    std::uint32_t paramReason = 1;  // DLL_PROCESS_ATTACH
 
                     if ( genCodeArch == asmjit::ArchInfo::kTypeX86 )
                     {
@@ -1102,7 +1105,7 @@ struct AssemblyEnvironment
         std::uint32_t rvaToDLLEntryPoint = calcRedirRVA( modEntryPointRef );
         {
             std::uint32_t paramReserved = 0;
-            std::uint32_t paramReason = DLL_PROCESS_ATTACH;
+            std::uint32_t paramReason = 1;      // DLL_PROCESS_ATTACH
 
             if ( genCodeArch == asmjit::ArchInfo::kTypeX86 )
             {
@@ -1396,7 +1399,7 @@ int main( int argc, char *argv[] )
                 {
                     x86_asm.sub( asmjit::x86::esp, 4 );
                     x86_asm.push( asmjit::x86::esp );
-                    x86_asm.push( (std::uint32_t)PAGE_READWRITE );
+                    x86_asm.push( (std::uint32_t)_PAGE_READWRITE );
                     x86_asm.push( (std::uint32_t)1024 );
                     x86_asm.push( asmjit::Imm( 0, true ) );
                 }
@@ -1405,7 +1408,7 @@ int main( int argc, char *argv[] )
                     x86_asm.sub( asmjit::x86::rsp, 16 );
                     x86_asm.mov( asmjit::x86::rcx, asmjit::Imm( 0, true ) );
                     x86_asm.mov( asmjit::x86::rdx, 1024u );
-                    x86_asm.mov( asmjit::x86::r8, (std::uint32_t)PAGE_READWRITE );
+                    x86_asm.mov( asmjit::x86::r8, (std::uint32_t)_PAGE_READWRITE );
                     x86_asm.mov( asmjit::x86::r9, asmjit::x86::rsp );
                 }
                 else
@@ -1445,7 +1448,7 @@ int main( int argc, char *argv[] )
                 {
                     x86_asm.push( asmjit::x86::esp );
                     x86_asm.push( asmjit::X86Mem( asmjit::x86::esp, 4, 4 ) );
-                    x86_asm.push( (std::uint32_t)1024 );
+                    x86_asm.push( (std::uint32_t)1024u );
                     x86_asm.push( asmjit::Imm( 0, true ) );
                 }
                 else if ( genCodeArch == asmjit::ArchInfo::kTypeX64 )
