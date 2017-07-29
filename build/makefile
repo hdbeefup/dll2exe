@@ -1,9 +1,9 @@
 CC := g++
 srcdir := $(CURDIR)/../src
 objdir := $(CURDIR)/../obj/linux
-sources := $(wildcard $(srcdir)/**.cpp)
-headers := $(wildcard $(srcdir)/**.h)
-objects := $(patsubst $(srcdir)/%.cpp,$(objdir)/%.o,$(sources))
+sources := $(shell find $(srcdir) -name "*.cpp")
+headers := $(shell find $(srcdir) -name "*.h") $(shell find $(srcdir) -name "*.hxx")
+objects := $(patsubst $(srcdir)/%,$(objdir)/%.o,$(sources))
 INCLUDE := \
     -I$(CURDIR)/../vendor/peframework/include \
     -I$(CURDIR)/../vendor/eirrepo \
@@ -20,7 +20,7 @@ main : $(objects) $(headers) peframework.vendor asmjit.vendor asmjitshared.vendo
     cd $(BUILD_DIR) ; \
     $(CC) $(LIBDIRS) -o ../bin/pefrmdllembed $(objects) -l peframework -l asmjit -l asmjitshared 
 
-$(objdir)/%.o : $(srcdir)/%.cpp ; \
+$(objdir)/%.o : $(srcdir)/% ; \
     mkdir -p $(dir $@) ; \
     $(CC) -O3 -o $(objdir)/$(patsubst $(objdir)/%.o,%.o,$@) -c $< -Wno-invalid-offsetof $(INCLUDE) ;
 
