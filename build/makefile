@@ -22,7 +22,7 @@ main : $(objects) $(headers) peframework.vendor asmjit.vendor asmjitshared.vendo
 
 $(objdir)/%.o : $(srcdir)/% ; \
     mkdir -p $(dir $@) ; \
-    $(CC) -O3 -o $(objdir)/$(patsubst $(objdir)/%.o,%.o,$@) -c $< -Wno-invalid-offsetof $(INCLUDE) ;
+    $(CC) -O3 -o $@ -c $< -Wno-invalid-offsetof $(INCLUDE) ;
 
 %.vendor : ; \
     cd $(BUILD_DIR)/../vendor/$(patsubst %.vendor,%,$@)/build/ ; \
