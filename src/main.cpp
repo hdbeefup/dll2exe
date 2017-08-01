@@ -12,6 +12,8 @@
 
 #include <asmjitshared.h>
 
+#include <sdk/UniChar.h>
+
 #include "option.h"
 
 // We need PE image structures due to Win32 image loading behavior.
@@ -336,7 +338,7 @@ struct AssemblyEnvironment
         return;
     }
 
-    inline int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage, bool requiresRelocations, std::uint32_t archPointerSize )
+    inline int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage, bool requiresRelocations, const char *moduleImageName, bool injectMatchingImports, std::uint32_t archPointerSize )
     {
         // moduleImage cannot be const because we seek inside of its sections.
 
@@ -884,6 +886,232 @@ struct AssemblyEnvironment
             }
         }
 
+        // We might want to inject exports into the imports of the executable module.
+        if ( injectMatchingImports )
+        {
+            std::cout << "injecting matched PE imports" << std::endl;
+
+            // Should keep track of how many items we matched of which type.
+            size_t numOrdinalMatches = 0;
+            size_t numNameMatches = 0;
+
+            // For each export entry in our importing module we check for all import entries
+            // that match it in the executable module. If we find a match we split the import
+            // directories in the thunk so that we can write into the loader address during
+            // entry point.
+            auto dstImpDescIter = exeImage.imports.begin();
+
+            size_t numExportFuncs = moduleImage.exportDir.functions.size();
+
+            while ( dstImpDescIter != exeImage.imports.end() )
+            {
+                PEFile::PEImportDesc& impDesc = *dstImpDescIter;
+
+                bool removeImpDesc = false;
+
+                // Do things for matching import descriptors only.
+                if ( UniversalCompareStrings( impDesc.DLLName.c_str(), impDesc.DLLName.size(), moduleImageName, strlen(moduleImageName), false ) )
+                {
+                    // Check if any entry of this import directory is hosted by any export entry.
+                    size_t numImpFuncs = impDesc.funcs.size();
+                    size_t impFuncIter = 0;
+
+                    while ( impFuncIter < numImpFuncs )
+                    {
+                        // Check for any match.
+                        const PEFile::PEExportDir::func *expFuncMatch = NULL;
+                        {
+                            const PEFile::PEImportDesc::importFunc& impFunc = impDesc.funcs[ impFuncIter ];
+
+                            size_t impOrdinal;
+                            bool hasImportOrdinal = false;
+
+                            bool isOrdinalMatch = false;
+                            bool isNameMatch = false;
+                            const char *nameOfImport = NULL;
+
+                            if ( impFunc.isOrdinalImport )
+                            {
+                                impOrdinal = impFunc.ordinal_hint;
+                                hasImportOrdinal = true;
+
+                                isOrdinalMatch = true;
+                            }
+                            else
+                            {
+                                auto findIter = moduleImage.exportDir.funcNameMap.find( impFunc.name );
+
+                                if ( findIter != moduleImage.exportDir.funcNameMap.end() )
+                                {
+                                    impOrdinal = findIter->second;
+                                    hasImportOrdinal = true;
+
+                                    nameOfImport = (*findIter).first.name.c_str();
+
+                                    isNameMatch = true;
+                                }
+                            }
+
+                            if ( hasImportOrdinal )
+                            {
+                                // Need to subtract the ordinal base.
+                                impOrdinal -= moduleImage.exportDir.ordinalBase;
+
+                                if ( impOrdinal < numExportFuncs )
+                                {
+                                    const PEFile::PEExportDir::func& expFunc = moduleImage.exportDir.functions[ impOrdinal ];
+
+                                    if ( expFunc.isForwarder == false )
+                                    {
+                                        expFuncMatch = &expFunc;
+
+                                        // Keep track of change count.
+                                        if ( isOrdinalMatch )
+                                        {
+                                            std::cout << "* by ordinal " << impOrdinal << std::endl;
+
+                                            numOrdinalMatches++;
+                                        }
+
+                                        if ( isNameMatch )
+                                        {
+                                            std::cout << "* by name " << nameOfImport << std::endl;
+
+                                            numNameMatches++;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if ( expFuncMatch != NULL )
+                        {
+                            // So if we did match, then we replace this entry.
+                            // Write the function address from the entry point.
+                            std::uint32_t thunkTableOffset = (std::uint32_t)( archPointerSize * impFuncIter );
+                            {
+                                PEFile::PESectionDataReference exeImageFuncRef = calcRedirRef( expFuncMatch->expRef );
+                            
+                                std::uint64_t exeImageFuncVA = ( exeImageFuncRef.GetRVA() + exeModuleBase );
+
+                                PEFile::PESection *thunkSect = impDesc.firstThunkRef.GetSection();
+
+                                // There should not be a case where import entries come without thunk RVAs.
+                                assert( thunkSect != NULL );
+
+                                std::uint32_t thunkSectOffset = ( impDesc.firstThunkRef.GetSectionOffset() + thunkTableOffset );
+
+                                thunkSect->stream.Seek( thunkSectOffset );
+                            
+                                if ( archPointerSize == 4 )
+                                {
+                                    thunkSect->stream.WriteUInt32( (std::uint32_t)exeImageFuncVA );
+                                }
+                                else if ( archPointerSize == 8 )
+                                {
+                                    thunkSect->stream.WriteUInt64( exeImageFuncVA );
+                                }
+                                else
+                                {
+                                    std::cout << "invalid arch pointer size in PE import injection" << std::endl;
+
+                                    return -20;
+                                }
+
+                                // We could also need a base relocation entry.
+                                if ( requiresRelocations )
+                                {
+                                    PEFile::PEBaseReloc::eRelocType relocType = PEFile::PEBaseReloc::GetRelocTypeForPointerSize( archPointerSize );
+
+                                    if ( relocType != PEFile::PEBaseReloc::eRelocType::ABSOLUTE )
+                                    {
+                                        std::uint32_t thunkItemRVA = ( thunkSect->GetVirtualAddress() + thunkSectOffset );
+
+                                        exeImage.AddRelocation( thunkItemRVA, relocType );
+                                    }
+                                }
+                            }
+
+                            // We first split the import directory into two.
+                            size_t first_part_count = ( impFuncIter );
+                            size_t second_part_offset = ( first_part_count + 1 );
+                            size_t second_part_count = ( numImpFuncs - second_part_offset );
+
+                            // We remove one so we got less next time.
+                            numImpFuncs--;
+
+                            if ( first_part_count == 0 && second_part_count == 0 )
+                            {
+                                // Just remove this import entry.
+                                removeImpDesc = true;
+                                break;
+                            }
+                            else if ( first_part_count > 0 && second_part_count > 0 )
+                            {
+                                // Simply take over the remainder of the first entry into a new second entry.
+                                PEFile::PEImportDesc newSecondDesc;
+                                newSecondDesc.DLLName = impDesc.DLLName;
+                                newSecondDesc.funcs.reserve( second_part_count );
+                                {
+                                    auto beginMoveIter = std::make_move_iterator( impDesc.funcs.begin() + second_part_offset );
+                                    auto endMoveIter = ( beginMoveIter + second_part_count );
+
+                                    newSecondDesc.funcs.insert( newSecondDesc.funcs.begin(), beginMoveIter, endMoveIter );
+                                }
+                            
+                                // Need to point to the new entry properly.
+                                newSecondDesc.firstThunkRef =
+                                    exeImage.ResolveRVAToRef( impDesc.firstThunkRef.GetRVA() + ( thunkTableOffset + archPointerSize ) );
+
+                                // Trim the first entry.
+                                impDesc.funcs.resize( first_part_count );
+
+                                // Insert the new import descriptor after our.
+                                exeImage.imports.insert( dstImpDescIter + 1, std::move( newSecondDesc ) );
+
+                                impFuncIter++;
+                            }
+                            else if ( first_part_count > 0 )
+                            {
+                                // We simply trim this import descriptor.
+                                impDesc.funcs.resize( first_part_count );
+
+                                // Actually useless but here for mind-model completeness.
+                                impFuncIter++;
+                            }
+                            else
+                            {
+                                // Move this import descripter a little.
+                                impDesc.funcs.erase( impDesc.funcs.begin() );
+
+                                impDesc.firstThunkRef = exeImage.ResolveRVAToRef( impDesc.firstThunkRef.GetRVA() + archPointerSize );
+                            }
+
+                            // Nice.
+                        }
+                    }
+                }
+
+                if ( removeImpDesc )
+                {
+                    dstImpDescIter = exeImage.imports.erase( dstImpDescIter );
+                }
+                else
+                {
+                    dstImpDescIter++;
+                }
+            }
+
+            // If any work was done then we should rewrite the imports table.
+            if ( numNameMatches > 0 || numOrdinalMatches > 0 )
+            {
+                exeImage.importsAllocEntry = PEFile::PESectionAllocation();
+            }
+
+            // Output some helpful statistics.
+            std::cout << "injected " << numNameMatches << " named and " << numOrdinalMatches << " ordinal PE imports" << std::endl;
+        }
+
         // TODO: generate all code that depends on RVAs over here.
 
         // Do we need TLS data?
@@ -1138,6 +1366,33 @@ struct AssemblyEnvironment
     }
 };
 
+// Fetches a filename from a file path, or at least attempts to.
+static const char* FetchFileName( const char *path )
+{
+    // We skip till the last slash character.
+    const char *pathIter = path;
+    const char *last_file_name = pathIter;
+
+    while ( true )
+    {
+        char c = *pathIter;
+
+        if ( c == 0 )
+        {
+            break;
+        }
+
+        pathIter++;
+
+        if ( c == '/' || c == '\\' )
+        {
+            last_file_name = pathIter;
+        }
+    }
+
+    return last_file_name;
+}
+
 int main( int argc, char *argv[] )
 {
     std::cout <<
@@ -1149,6 +1404,8 @@ int main( int argc, char *argv[] )
     size_t curArg = 1;
 
     bool doFixEntryPoint = false;
+    bool doInjectMatchingImports = false;
+    bool doPrintHelp = false;
 
     if ( argc >= 1 )
     {
@@ -1166,6 +1423,14 @@ int main( int argc, char *argv[] )
             {
                 doFixEntryPoint = true;
             }
+            else if ( opt == "injimp" || opt == "impinj" )
+            {
+                doInjectMatchingImports = true;
+            }
+            else if ( opt == "help" || opt == "h" || opt == "?" )
+            {
+                doPrintHelp = true;
+            }
             else
             {
                 std::cout << "unknown cmdline option: " << opt << std::endl;
@@ -1177,6 +1442,20 @@ int main( int argc, char *argv[] )
         curArg += optArgIndex;
 
         argc -= (int)optArgIndex;
+    }
+
+    // If we print help, then we just do that and quit.
+    if ( doPrintHelp )
+    {
+        std::cout << "USAGE: -[options] *input.exe* *input1.dll* *input2.dll* ... *inputn.dll* *output.exe*" << std::endl;
+        std::cout << std::endl;
+
+        std::cout << "Option Descriptions:" << std::endl;
+        std::cout << "-efix: restores original executable entry point in PE header after DLL load" << std::endl;
+        std::cout << "-injimp: hooks executable imports with input DLL exports" << std::endl;
+        std::cout << "-help: prints this help text" << std::endl;
+
+        return 0;
     }
 
     // Fetch possible input executable and input module from arguments.
@@ -1514,8 +1793,11 @@ int main( int argc, char *argv[] )
                     return -3;
                 }
 
+                // Fetch module name.
+                const char *moduleFileName = FetchFileName( inputModImageName );
+
                 // Perform the embedding.
-                int statusEmbed = asmEnv.EmbedModuleIntoExecutable( exeImage, moduleImage, requiresRelocations, archPointerSize );
+                int statusEmbed = asmEnv.EmbedModuleIntoExecutable( exeImage, moduleImage, requiresRelocations, moduleFileName, doInjectMatchingImports, archPointerSize );
 
                 if ( statusEmbed != 0 )
                 {
