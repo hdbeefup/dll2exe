@@ -298,6 +298,184 @@ struct resourceHelpers
     }
 };
 
+static void WriteVirtualAddress( PEFile& image, PEFile::PESection *targetSect, std::uint32_t sectOffset, std::uint64_t virtualAddress, std::uint32_t archPointerSize, bool requiresRelocations )
+{
+    std::uint32_t itemRVA = ( targetSect->GetVirtualAddress() + sectOffset );
+
+    targetSect->stream.Seek( sectOffset );
+    
+    if ( archPointerSize == 4 )
+    {
+        targetSect->stream.WriteUInt32( (std::uint32_t)( virtualAddress ) );
+    }
+    else if ( archPointerSize == 8 )
+    {
+        targetSect->stream.WriteUInt64( virtualAddress );
+    }
+    else
+    {
+        throw peframework_exception( ePEExceptCode::RUNTIME_ERROR, "invalid arch pointer size in PE virtual address write" );
+    }
+
+    // We could also need a base relocation entry.
+    if ( requiresRelocations )
+    {
+        PEFile::PEBaseReloc::eRelocType relocType = PEFile::PEBaseReloc::GetRelocTypeForPointerSize( archPointerSize );
+
+        if ( relocType != PEFile::PEBaseReloc::eRelocType::ABSOLUTE )
+        {   
+            image.AddRelocation( itemRVA, relocType );
+        }
+    }
+}
+
+template <typename splitOperatorType>
+static inline bool PutSplitIntoImports( PEFile& image, size_t& splitIndex, std::uint32_t thunkTableOffset, std::uint32_t archPointerSize, splitOperatorType& splitOperator )
+{
+    // Returns true if the import descriptor should be removed.
+
+    size_t numImpFuncs = splitOperator.GetImportFunctions().size();
+
+    if ( numImpFuncs <= splitIndex )
+    {
+        // Outside of range or imports empty.
+        return false;
+    }
+
+    // We first split the import directory into two.
+    size_t first_part_count = ( splitIndex );
+    size_t second_part_offset = ( first_part_count + 1 );
+    size_t second_part_count = ( numImpFuncs - second_part_offset );
+
+    if ( first_part_count == 0 && second_part_count == 0 )
+    {
+        // Just remove this import entry.
+        return true;
+    }
+    else if ( first_part_count > 0 && second_part_count > 0 )
+    {
+        // Simply take over the remainder of the first entry into a new second entry.
+        splitOperator.MakeSecondDescriptor(
+            image,
+            second_part_offset, second_part_count,
+            // Need to point to the new entry properly.
+            ( thunkTableOffset + archPointerSize )
+        );
+
+        // Trim the first entry.
+        splitOperator.TrimFirstDescriptor( first_part_count );
+
+        splitIndex++;
+    }
+    else if ( first_part_count > 0 )
+    {
+        // We simply trim this import descriptor.
+        splitOperator.TrimFirstDescriptor( first_part_count );
+
+        // Actually useless but here for mind-model completeness.
+        splitIndex++;
+    }
+    else
+    {
+        // Move this import descriptor a little.
+        splitOperator.RemoveFirstEntry();
+
+        splitOperator.MoveIATBy( image, archPointerSize );
+    }
+
+    // We keep the import descriptor.
+    return false;
+}
+
+template <typename splitOperatorType, typename calcRedirRef_t>
+static inline bool InjectImportsWithExports(
+    PEFile& image,
+    PEFile::PEExportDir& exportDir, splitOperatorType& splitOperator, const calcRedirRef_t& calcRedirRef,
+    size_t& numOrdinalMatches, size_t& numNameMatches,
+    std::uint32_t archPointerSize, bool requiresRelocations
+)
+{
+    // Returns true if the import descriptor should be removed.
+
+    PEFile::PEImportDesc::functions_t& impFuncs = splitOperator.GetImportFunctions();
+    PEFile::PESectionDataReference& firstThunkRef = splitOperator.GetFirstThunkRef();
+
+    // Check if any entry of this import directory is hosted by any export entry.
+    size_t impFuncIter = 0;
+
+    while ( true )
+    {
+        size_t numImpFuncs = impFuncs.size();
+
+        if ( impFuncIter >= numImpFuncs )
+        {
+            break;
+        }
+
+        // Check for any match.
+        const PEFile::PEImportDesc::importFunc& impFunc = impFuncs[ impFuncIter ];
+
+        bool isOrdinalMatch = impFunc.isOrdinalImport;
+        std::uint32_t ordinalOfImport = impFunc.ordinal_hint;
+        const std::string& nameOfImport = impFunc.name;
+
+        const PEFile::PEExportDir::func *expFuncMatch = expFuncMatch = exportDir.ResolveExport( isOrdinalMatch, ordinalOfImport, nameOfImport );
+
+        if ( expFuncMatch != NULL )
+        {
+            // Keep track of change count.
+            if ( isOrdinalMatch )
+            {
+                std::cout << "* by ordinal " << ordinalOfImport << std::endl;
+
+                numOrdinalMatches++;
+            }
+            else
+            {
+                std::cout << "* by name " << nameOfImport << std::endl;
+
+                numNameMatches++;
+            }
+
+            // So if we did match, then we replace this entry.
+            // Write the function address from the entry point.
+            std::uint32_t thunkTableOffset = (std::uint32_t)( archPointerSize * impFuncIter );
+            {
+                PEFile::PESectionDataReference exeImageFuncRef = calcRedirRef( expFuncMatch->expRef );
+                            
+                std::uint64_t exeImageFuncVA = ( exeImageFuncRef.GetRVA() + image.GetImageBase() );
+
+                PEFile::PESection *thunkSect = firstThunkRef.GetSection();
+
+                // There should not be a case where import entries come without thunk RVAs.
+                assert( thunkSect != NULL );
+
+                std::uint32_t thunkSectOffset = ( firstThunkRef.GetSectionOffset() + thunkTableOffset );
+
+                WriteVirtualAddress( image, thunkSect, thunkSectOffset, exeImageFuncVA, archPointerSize, requiresRelocations );
+            }
+
+            // Perform the split operation.
+            bool removeImpDesc = PutSplitIntoImports( image, impFuncIter, thunkTableOffset, archPointerSize, splitOperator );
+
+            // We could be done with this import descriptor entirely, in which case true is returned.
+            // The runtime must remove it in that case.
+            if ( removeImpDesc )
+            {
+                return true;
+            }
+        }
+        else
+        {
+            // This import found no representation, so we simply skip it.
+            impFuncIter++;
+        }
+    }
+
+    // Can keep the import descriptor.
+    return false;
+}
+
 struct AssemblyEnvironment
 {
     struct MightyAssembler : public asmjit::X86Assembler
@@ -327,19 +505,35 @@ struct AssemblyEnvironment
 
     MightyAssembler x86_asm;
 
-    inline AssemblyEnvironment( asmjit::CodeHolder *codeHolder )
-        : x86_asm( codeHolder )
+    PEFile& embedImage;
+    PEFile::PESection metaSect;
+
+    // List of allocations done by the runtime that should stay until the metaSect has been placed
+    // into the image, finally.
+    std::list <PEFile::PESectionAllocation> persistentAllocations;
+
+    inline AssemblyEnvironment( PEFile& embedImage, asmjit::CodeHolder *codeHolder )
+        : x86_asm( codeHolder ), embedImage( embedImage )
     {
-        return;
+        metaSect.shortName = ".meta";
+        metaSect.chars.sect_mem_read = true;
+        metaSect.chars.sect_mem_write = true;
     }
 
     inline ~AssemblyEnvironment( void )
     {
-        return;
+        if ( metaSect.IsEmpty() == false )
+        {
+            metaSect.Finalize();
+
+            embedImage.AddSection( std::move( this->metaSect ) );
+        }
     }
 
-    inline int EmbedModuleIntoExecutable( PEFile& exeImage, PEFile& moduleImage, bool requiresRelocations, const char *moduleImageName, bool injectMatchingImports, std::uint32_t archPointerSize )
+    inline int EmbedModuleIntoExecutable( PEFile& moduleImage, bool requiresRelocations, const char *moduleImageName, bool injectMatchingImports, std::uint32_t archPointerSize )
     {
+        PEFile& exeImage = this->embedImage;
+
         // moduleImage cannot be const because we seek inside of its sections.
 
         // Check that the module is a DLL.
@@ -889,7 +1083,7 @@ struct AssemblyEnvironment
         // We might want to inject exports into the imports of the executable module.
         if ( injectMatchingImports )
         {
-            std::cout << "injecting matched PE imports" << std::endl;
+            std::cout << "injecting matched PE imports..." << std::endl;
 
             // Should keep track of how many items we matched of which type.
             size_t numOrdinalMatches = 0;
@@ -899,206 +1093,228 @@ struct AssemblyEnvironment
             // that match it in the executable module. If we find a match we split the import
             // directories in the thunk so that we can write into the loader address during
             // entry point.
-            auto dstImpDescIter = exeImage.imports.begin();
-
-            size_t numExportFuncs = moduleImage.exportDir.functions.size();
-
-            while ( dstImpDescIter != exeImage.imports.end() )
             {
-                PEFile::PEImportDesc& impDesc = *dstImpDescIter;
+                auto dstImpDescIter = exeImage.imports.begin();
 
-                bool removeImpDesc = false;
+                size_t numExportFuncs = moduleImage.exportDir.functions.size();
 
-                // Do things for matching import descriptors only.
-                if ( UniversalCompareStrings( impDesc.DLLName.c_str(), impDesc.DLLName.size(), moduleImageName, strlen(moduleImageName), false ) )
+                while ( dstImpDescIter != exeImage.imports.end() )
                 {
-                    // Check if any entry of this import directory is hosted by any export entry.
-                    size_t numImpFuncs = impDesc.funcs.size();
-                    size_t impFuncIter = 0;
+                    PEFile::PEImportDesc& impDesc = *dstImpDescIter;
 
-                    while ( impFuncIter < numImpFuncs )
+                    bool removeImpDesc = false;
+
+                    // Do things for matching import descriptors only.
+                    if ( UniversalCompareStrings(
+                            impDesc.DLLName.c_str(), impDesc.DLLName.size(),
+                            moduleImageName, strlen(moduleImageName),
+                            false ) )
                     {
-                        // Check for any match.
-                        const PEFile::PEExportDir::func *expFuncMatch = NULL;
+                        struct basicImpDescriptorHandler
                         {
-                            const PEFile::PEImportDesc::importFunc& impFunc = impDesc.funcs[ impFuncIter ];
+                            PEFile::PEImportDesc& impDesc;
+                            size_t archPointerSize;
+                            const decltype( PEFile::imports )::iterator& dstImpDescIter;
 
-                            size_t impOrdinal;
-                            bool hasImportOrdinal = false;
-
-                            bool isOrdinalMatch = false;
-                            bool isNameMatch = false;
-                            const char *nameOfImport = NULL;
-
-                            if ( impFunc.isOrdinalImport )
+                            AINLINE basicImpDescriptorHandler( PEFile::PEImportDesc& impDesc, const decltype( PEFile::imports )::iterator& dstImpDescIter, size_t archPointerSize )
+                                : impDesc( impDesc ), dstImpDescIter( dstImpDescIter )
                             {
-                                impOrdinal = impFunc.ordinal_hint;
-                                hasImportOrdinal = true;
-
-                                isOrdinalMatch = true;
-                            }
-                            else
-                            {
-                                auto findIter = moduleImage.exportDir.funcNameMap.find( impFunc.name );
-
-                                if ( findIter != moduleImage.exportDir.funcNameMap.end() )
-                                {
-                                    impOrdinal = findIter->second;
-                                    hasImportOrdinal = true;
-
-                                    nameOfImport = (*findIter).first.name.c_str();
-
-                                    isNameMatch = true;
-                                }
+                                this->archPointerSize = archPointerSize;
                             }
 
-                            if ( hasImportOrdinal )
-                            {
-                                // Need to subtract the ordinal base.
-                                impOrdinal -= moduleImage.exportDir.ordinalBase;
-
-                                if ( impOrdinal < numExportFuncs )
-                                {
-                                    const PEFile::PEExportDir::func& expFunc = moduleImage.exportDir.functions[ impOrdinal ];
-
-                                    if ( expFunc.isForwarder == false )
-                                    {
-                                        expFuncMatch = &expFunc;
-
-                                        // Keep track of change count.
-                                        if ( isOrdinalMatch )
-                                        {
-                                            std::cout << "* by ordinal " << impOrdinal << std::endl;
-
-                                            numOrdinalMatches++;
-                                        }
-
-                                        if ( isNameMatch )
-                                        {
-                                            std::cout << "* by name " << nameOfImport << std::endl;
-
-                                            numNameMatches++;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        if ( expFuncMatch != NULL )
-                        {
-                            // So if we did match, then we replace this entry.
-                            // Write the function address from the entry point.
-                            std::uint32_t thunkTableOffset = (std::uint32_t)( archPointerSize * impFuncIter );
-                            {
-                                PEFile::PESectionDataReference exeImageFuncRef = calcRedirRef( expFuncMatch->expRef );
-                            
-                                std::uint64_t exeImageFuncVA = ( exeImageFuncRef.GetRVA() + exeModuleBase );
-
-                                PEFile::PESection *thunkSect = impDesc.firstThunkRef.GetSection();
-
-                                // There should not be a case where import entries come without thunk RVAs.
-                                assert( thunkSect != NULL );
-
-                                std::uint32_t thunkSectOffset = ( impDesc.firstThunkRef.GetSectionOffset() + thunkTableOffset );
-
-                                thunkSect->stream.Seek( thunkSectOffset );
-                            
-                                if ( archPointerSize == 4 )
-                                {
-                                    thunkSect->stream.WriteUInt32( (std::uint32_t)exeImageFuncVA );
-                                }
-                                else if ( archPointerSize == 8 )
-                                {
-                                    thunkSect->stream.WriteUInt64( exeImageFuncVA );
-                                }
-                                else
-                                {
-                                    std::cout << "invalid arch pointer size in PE import injection" << std::endl;
-
-                                    return -20;
-                                }
-
-                                // We could also need a base relocation entry.
-                                if ( requiresRelocations )
-                                {
-                                    PEFile::PEBaseReloc::eRelocType relocType = PEFile::PEBaseReloc::GetRelocTypeForPointerSize( archPointerSize );
-
-                                    if ( relocType != PEFile::PEBaseReloc::eRelocType::ABSOLUTE )
-                                    {
-                                        std::uint32_t thunkItemRVA = ( thunkSect->GetVirtualAddress() + thunkSectOffset );
-
-                                        exeImage.AddRelocation( thunkItemRVA, relocType );
-                                    }
-                                }
-                            }
-
-                            // We first split the import directory into two.
-                            size_t first_part_count = ( impFuncIter );
-                            size_t second_part_offset = ( first_part_count + 1 );
-                            size_t second_part_count = ( numImpFuncs - second_part_offset );
-
-                            // We remove one so we got less next time.
-                            numImpFuncs--;
-
-                            if ( first_part_count == 0 && second_part_count == 0 )
-                            {
-                                // Just remove this import entry.
-                                removeImpDesc = true;
-                                break;
-                            }
-                            else if ( first_part_count > 0 && second_part_count > 0 )
+                            AINLINE void MakeSecondDescriptor( PEFile& image, size_t functake_idx, size_t functake_count, std::uint32_t thunkRefStartOffset )
                             {
                                 // Simply take over the remainder of the first entry into a new second entry.
                                 PEFile::PEImportDesc newSecondDesc;
                                 newSecondDesc.DLLName = impDesc.DLLName;
-                                newSecondDesc.funcs.reserve( second_part_count );
+                                newSecondDesc.funcs.reserve( functake_count );
                                 {
-                                    auto beginMoveIter = std::make_move_iterator( impDesc.funcs.begin() + second_part_offset );
-                                    auto endMoveIter = ( beginMoveIter + second_part_count );
+                                    auto beginMoveIter = std::make_move_iterator( impDesc.funcs.begin() + functake_idx );
+                                    auto endMoveIter = ( beginMoveIter + functake_count );
 
                                     newSecondDesc.funcs.insert( newSecondDesc.funcs.begin(), beginMoveIter, endMoveIter );
                                 }
-                            
-                                // Need to point to the new entry properly.
-                                newSecondDesc.firstThunkRef =
-                                    exeImage.ResolveRVAToRef( impDesc.firstThunkRef.GetRVA() + ( thunkTableOffset + archPointerSize ) );
 
-                                // Trim the first entry.
-                                impDesc.funcs.resize( first_part_count );
+                                // Need to point to the new entry properly.
+                                newSecondDesc.firstThunkRef = image.ResolveRVAToRef( impDesc.firstThunkRef.GetRVA() + thunkRefStartOffset );
 
                                 // Insert the new import descriptor after our.
-                                exeImage.imports.insert( dstImpDescIter + 1, std::move( newSecondDesc ) );
-
-                                impFuncIter++;
+                                image.imports.insert( this->dstImpDescIter + 1, std::move( newSecondDesc ) );
                             }
-                            else if ( first_part_count > 0 )
-                            {
-                                // We simply trim this import descriptor.
-                                impDesc.funcs.resize( first_part_count );
 
-                                // Actually useless but here for mind-model completeness.
-                                impFuncIter++;
-                            }
-                            else
+                            AINLINE PEFile::PEImportDesc::functions_t& GetImportFunctions( void )
                             {
-                                // Move this import descripter a little.
+                                return impDesc.funcs;
+                            }
+
+                            AINLINE PEFile::PESectionDataReference& GetFirstThunkRef( void )
+                            {
+                                return impDesc.firstThunkRef;
+                            }
+
+                            AINLINE void TrimFirstDescriptor( size_t trimTo )
+                            {
+                                impDesc.funcs.resize( trimTo );
+                            }
+
+                            AINLINE void MoveIATBy( PEFile& image, std::uint32_t moveBytes )
+                            {
+                                impDesc.firstThunkRef = image.ResolveRVAToRef( impDesc.firstThunkRef.GetRVA() + moveBytes );
+                            }
+
+                            AINLINE void RemoveFirstEntry( void )
+                            {
                                 impDesc.funcs.erase( impDesc.funcs.begin() );
-
-                                impDesc.firstThunkRef = exeImage.ResolveRVAToRef( impDesc.firstThunkRef.GetRVA() + archPointerSize );
                             }
+                        };
+                        basicImpDescriptorHandler splitOp( impDesc, dstImpDescIter, archPointerSize );
 
-                            // Nice.
-                        }
+                        removeImpDesc = InjectImportsWithExports(
+                            exeImage,
+                            moduleImage.exportDir, splitOp, calcRedirRef,
+                            numOrdinalMatches, numNameMatches,
+                            archPointerSize, requiresRelocations
+                        );
+                    }
+
+                    if ( removeImpDesc )
+                    {
+                        dstImpDescIter = exeImage.imports.erase( dstImpDescIter );
+                    }
+                    else
+                    {
+                        dstImpDescIter++;
                     }
                 }
+            }
 
-                if ( removeImpDesc )
+            // Also do the delayed import descriptors, which should be possible.
+            {
+                auto dstImpDescIter = exeImage.delayLoads.begin();
+
+                while ( dstImpDescIter != exeImage.delayLoads.end() )
                 {
-                    dstImpDescIter = exeImage.imports.erase( dstImpDescIter );
-                }
-                else
-                {
-                    dstImpDescIter++;
+                    bool removeImpDesc = false;
+
+                    // Process this import descriptor.
+                    {
+                        PEFile::PEDelayLoadDesc& impDesc = *dstImpDescIter;
+
+                        if ( UniversalCompareStrings( impDesc.DLLName.c_str(), impDesc.DLLName.size(), moduleImageName, strlen(moduleImageName), false ) )
+                        {
+                            struct delayedImpDescriptorHandler
+                            {
+                                AssemblyEnvironment& env;
+                                PEFile::PEDelayLoadDesc& impDesc;
+                                std::uint32_t archPointerSize;
+                                const decltype( PEFile::delayLoads )::iterator& dstImpDescIter;
+
+                                AINLINE delayedImpDescriptorHandler( AssemblyEnvironment& env, PEFile::PEDelayLoadDesc& impDesc, std::uint32_t archPointerSize, const decltype( PEFile::delayLoads )::iterator& dstImpDescIter )
+                                    : impDesc( impDesc ), env( env ), dstImpDescIter( dstImpDescIter )
+                                {
+                                    this->archPointerSize = archPointerSize;
+                                }
+
+                                AINLINE PEFile::PEImportDesc::functions_t& GetImportFunctions( void )
+                                {
+                                    return impDesc.importNames;
+                                }
+
+                                AINLINE PEFile::PESectionDataReference& GetFirstThunkRef( void )
+                                {
+                                    return impDesc.IATRef;
+                                }
+
+                                AINLINE void TrimFirstDescriptor( size_t trimTo )
+                                {
+                                    impDesc.importNames.resize( trimTo );
+                                }
+
+                                AINLINE void RemoveFirstEntry( void )
+                                {
+                                    impDesc.importNames.erase( impDesc.importNames.begin() );
+                                }
+
+                                AINLINE void MoveIATBy( PEFile& image, std::uint32_t moveBytes )
+                                {
+                                    impDesc.IATRef = image.ResolveRVAToRef( impDesc.IATRef.GetRVA() + moveBytes );
+                                    
+                                    // Move the other if it is available.
+                                    PEFile::PESectionDataReference& unloadIAT = impDesc.unloadInfoTableRef;
+
+                                    if ( unloadIAT.GetSection() != NULL )
+                                    {
+                                        unloadIAT = image.ResolveRVAToRef( unloadIAT.GetRVA() + moveBytes );
+                                    }
+                                }
+
+                                AINLINE void MakeSecondDescriptor( PEFile& image, size_t functake_idx, size_t functake_count, std::uint32_t thunkRefStartOffset )
+                                {
+                                    PEFile::PEDelayLoadDesc newSecondImp;
+                                    newSecondImp.attrib = impDesc.attrib;
+                                    newSecondImp.DLLName = impDesc.DLLName;
+                                    
+                                    // Allocate a new DLL handle memory position for this descriptor.
+                                    {
+                                        PEFile::PESectionAllocation handleAlloc;
+                                        env.metaSect.Allocate( handleAlloc, this->archPointerSize, this->archPointerSize );
+
+                                        env.persistentAllocations.push_back( std::move( handleAlloc ) );
+
+                                        newSecondImp.DLLHandleRef = env.persistentAllocations.back();
+                                    }
+
+                                    // Create a special IAT out of the previous.
+                                    newSecondImp.IATRef = image.ResolveRVAToRef( impDesc.IATRef.GetRVA() + thunkRefStartOffset );
+
+                                    // Copy over the import names aswell.
+                                    newSecondImp.importNames.reserve( functake_count );
+                                    {
+                                        auto beginMoveIter = std::make_move_iterator( impDesc.importNames.begin() + functake_idx );
+                                        auto endMoveIter = ( beginMoveIter + functake_count );
+
+                                        newSecondImp.importNames.insert( newSecondImp.importNames.begin(), beginMoveIter, endMoveIter );
+                                    }
+
+                                    // If an unload info table existed previously, also handle that case.
+                                    {
+                                        PEFile::PESectionDataReference& unloadIAT = impDesc.unloadInfoTableRef;
+
+                                        if ( unloadIAT.GetSection() != NULL )
+                                        {
+                                            newSecondImp.unloadInfoTableRef =
+                                                image.ResolveRVAToRef( unloadIAT.GetRVA() + thunkRefStartOffset );
+                                        }
+                                    }
+
+                                    newSecondImp.timeDateStamp = impDesc.timeDateStamp;
+
+                                    // Put in the new descriptor after the one we manage.
+                                    image.delayLoads.insert( this->dstImpDescIter + 1, std::move( newSecondImp ) );
+
+                                    // Done.
+                                }
+                            };
+                            delayedImpDescriptorHandler splitOp( *this, impDesc, archPointerSize, dstImpDescIter );
+
+                            removeImpDesc =
+                                InjectImportsWithExports(
+                                    exeImage,
+                                    moduleImage.exportDir, splitOp, calcRedirRef,
+                                    numOrdinalMatches, numNameMatches,
+                                    archPointerSize, requiresRelocations
+                                );
+                        }
+                    }
+
+                    if ( removeImpDesc )
+                    {
+                        dstImpDescIter = exeImage.delayLoads.erase( dstImpDescIter );
+                    }
+                    else
+                    {
+                        dstImpDescIter++;
+                    }
                 }
             }
 
@@ -1594,7 +1810,7 @@ int main( int argc, char *argv[] )
         // We need to remember a label of the entry point.
         asmjit::Label entryPointLabel;
         {
-            AssemblyEnvironment asmEnv( &asmCodeHolder );
+            AssemblyEnvironment asmEnv( exeImage, &asmCodeHolder );
 
             asmjit::X86Assembler& x86_asm = asmEnv.x86_asm;
 
@@ -1797,7 +2013,7 @@ int main( int argc, char *argv[] )
                 const char *moduleFileName = FetchFileName( inputModImageName );
 
                 // Perform the embedding.
-                int statusEmbed = asmEnv.EmbedModuleIntoExecutable( exeImage, moduleImage, requiresRelocations, moduleFileName, doInjectMatchingImports, archPointerSize );
+                int statusEmbed = asmEnv.EmbedModuleIntoExecutable( moduleImage, requiresRelocations, moduleFileName, doInjectMatchingImports, archPointerSize );
 
                 if ( statusEmbed != 0 )
                 {
