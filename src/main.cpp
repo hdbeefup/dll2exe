@@ -1179,6 +1179,8 @@ struct AssemblyEnvironment
 
                     if ( removeImpDesc )
                     {
+                        std::cout << "* terminated import module " << impDesc.DLLName << std::endl;
+
                         dstImpDescIter = exeImage.imports.erase( dstImpDescIter );
                     }
                     else
@@ -1197,118 +1199,117 @@ struct AssemblyEnvironment
                     bool removeImpDesc = false;
 
                     // Process this import descriptor.
+                    PEFile::PEDelayLoadDesc& impDesc = *dstImpDescIter;
+
+                    if ( UniversalCompareStrings( impDesc.DLLName.c_str(), impDesc.DLLName.size(), moduleImageName, strlen(moduleImageName), false ) )
                     {
-                        PEFile::PEDelayLoadDesc& impDesc = *dstImpDescIter;
-
-                        if ( UniversalCompareStrings( impDesc.DLLName.c_str(), impDesc.DLLName.size(), moduleImageName, strlen(moduleImageName), false ) )
+                        struct delayedImpDescriptorHandler
                         {
-                            struct delayedImpDescriptorHandler
+                            AssemblyEnvironment& env;
+                            PEFile::PEDelayLoadDesc& impDesc;
+                            std::uint32_t archPointerSize;
+                            const decltype( PEFile::delayLoads )::iterator& dstImpDescIter;
+
+                            AINLINE delayedImpDescriptorHandler( AssemblyEnvironment& env, PEFile::PEDelayLoadDesc& impDesc, std::uint32_t archPointerSize, const decltype( PEFile::delayLoads )::iterator& dstImpDescIter )
+                                : impDesc( impDesc ), env( env ), dstImpDescIter( dstImpDescIter )
                             {
-                                AssemblyEnvironment& env;
-                                PEFile::PEDelayLoadDesc& impDesc;
-                                std::uint32_t archPointerSize;
-                                const decltype( PEFile::delayLoads )::iterator& dstImpDescIter;
+                                this->archPointerSize = archPointerSize;
+                            }
 
-                                AINLINE delayedImpDescriptorHandler( AssemblyEnvironment& env, PEFile::PEDelayLoadDesc& impDesc, std::uint32_t archPointerSize, const decltype( PEFile::delayLoads )::iterator& dstImpDescIter )
-                                    : impDesc( impDesc ), env( env ), dstImpDescIter( dstImpDescIter )
-                                {
-                                    this->archPointerSize = archPointerSize;
-                                }
+                            AINLINE PEFile::PEImportDesc::functions_t& GetImportFunctions( void )
+                            {
+                                return impDesc.importNames;
+                            }
 
-                                AINLINE PEFile::PEImportDesc::functions_t& GetImportFunctions( void )
-                                {
-                                    return impDesc.importNames;
-                                }
+                            AINLINE PEFile::PESectionDataReference& GetFirstThunkRef( void )
+                            {
+                                return impDesc.IATRef;
+                            }
 
-                                AINLINE PEFile::PESectionDataReference& GetFirstThunkRef( void )
-                                {
-                                    return impDesc.IATRef;
-                                }
+                            AINLINE void TrimFirstDescriptor( size_t trimTo )
+                            {
+                                impDesc.importNames.resize( trimTo );
+                            }
 
-                                AINLINE void TrimFirstDescriptor( size_t trimTo )
-                                {
-                                    impDesc.importNames.resize( trimTo );
-                                }
+                            AINLINE void RemoveFirstEntry( void )
+                            {
+                                impDesc.importNames.erase( impDesc.importNames.begin() );
+                            }
 
-                                AINLINE void RemoveFirstEntry( void )
-                                {
-                                    impDesc.importNames.erase( impDesc.importNames.begin() );
-                                }
-
-                                AINLINE void MoveIATBy( PEFile& image, std::uint32_t moveBytes )
-                                {
-                                    impDesc.IATRef = image.ResolveRVAToRef( impDesc.IATRef.GetRVA() + moveBytes );
+                            AINLINE void MoveIATBy( PEFile& image, std::uint32_t moveBytes )
+                            {
+                                impDesc.IATRef = image.ResolveRVAToRef( impDesc.IATRef.GetRVA() + moveBytes );
                                     
-                                    // Move the other if it is available.
+                                // Move the other if it is available.
+                                PEFile::PESectionDataReference& unloadIAT = impDesc.unloadInfoTableRef;
+
+                                if ( unloadIAT.GetSection() != NULL )
+                                {
+                                    unloadIAT = image.ResolveRVAToRef( unloadIAT.GetRVA() + moveBytes );
+                                }
+                            }
+
+                            AINLINE void MakeSecondDescriptor( PEFile& image, size_t functake_idx, size_t functake_count, std::uint32_t thunkRefStartOffset )
+                            {
+                                PEFile::PEDelayLoadDesc newSecondImp;
+                                newSecondImp.attrib = impDesc.attrib;
+                                newSecondImp.DLLName = impDesc.DLLName;
+                                    
+                                // Allocate a new DLL handle memory position for this descriptor.
+                                {
+                                    PEFile::PESectionAllocation handleAlloc;
+                                    env.metaSect.Allocate( handleAlloc, this->archPointerSize, this->archPointerSize );
+
+                                    env.persistentAllocations.push_back( std::move( handleAlloc ) );
+
+                                    newSecondImp.DLLHandleRef = env.persistentAllocations.back();
+                                }
+
+                                // Create a special IAT out of the previous.
+                                newSecondImp.IATRef = image.ResolveRVAToRef( impDesc.IATRef.GetRVA() + thunkRefStartOffset );
+
+                                // Copy over the import names aswell.
+                                newSecondImp.importNames.reserve( functake_count );
+                                {
+                                    auto beginMoveIter = std::make_move_iterator( impDesc.importNames.begin() + functake_idx );
+                                    auto endMoveIter = ( beginMoveIter + functake_count );
+
+                                    newSecondImp.importNames.insert( newSecondImp.importNames.begin(), beginMoveIter, endMoveIter );
+                                }
+
+                                // If an unload info table existed previously, also handle that case.
+                                {
                                     PEFile::PESectionDataReference& unloadIAT = impDesc.unloadInfoTableRef;
 
                                     if ( unloadIAT.GetSection() != NULL )
                                     {
-                                        unloadIAT = image.ResolveRVAToRef( unloadIAT.GetRVA() + moveBytes );
+                                        unloadIAT = image.ResolveRVAToRef( unloadIAT.GetRVA() + thunkRefStartOffset );
                                     }
                                 }
 
-                                AINLINE void MakeSecondDescriptor( PEFile& image, size_t functake_idx, size_t functake_count, std::uint32_t thunkRefStartOffset )
-                                {
-                                    PEFile::PEDelayLoadDesc newSecondImp;
-                                    newSecondImp.attrib = impDesc.attrib;
-                                    newSecondImp.DLLName = impDesc.DLLName;
-                                    
-                                    // Allocate a new DLL handle memory position for this descriptor.
-                                    {
-                                        PEFile::PESectionAllocation handleAlloc;
-                                        env.metaSect.Allocate( handleAlloc, this->archPointerSize, this->archPointerSize );
+                                newSecondImp.timeDateStamp = impDesc.timeDateStamp;
 
-                                        env.persistentAllocations.push_back( std::move( handleAlloc ) );
+                                // Put in the new descriptor after the one we manage.
+                                image.delayLoads.insert( this->dstImpDescIter + 1, std::move( newSecondImp ) );
 
-                                        newSecondImp.DLLHandleRef = env.persistentAllocations.back();
-                                    }
+                                // Done.
+                            }
+                        };
+                        delayedImpDescriptorHandler splitOp( *this, impDesc, archPointerSize, dstImpDescIter );
 
-                                    // Create a special IAT out of the previous.
-                                    newSecondImp.IATRef = image.ResolveRVAToRef( impDesc.IATRef.GetRVA() + thunkRefStartOffset );
-
-                                    // Copy over the import names aswell.
-                                    newSecondImp.importNames.reserve( functake_count );
-                                    {
-                                        auto beginMoveIter = std::make_move_iterator( impDesc.importNames.begin() + functake_idx );
-                                        auto endMoveIter = ( beginMoveIter + functake_count );
-
-                                        newSecondImp.importNames.insert( newSecondImp.importNames.begin(), beginMoveIter, endMoveIter );
-                                    }
-
-                                    // If an unload info table existed previously, also handle that case.
-                                    {
-                                        PEFile::PESectionDataReference& unloadIAT = impDesc.unloadInfoTableRef;
-
-                                        if ( unloadIAT.GetSection() != NULL )
-                                        {
-                                            newSecondImp.unloadInfoTableRef =
-                                                image.ResolveRVAToRef( unloadIAT.GetRVA() + thunkRefStartOffset );
-                                        }
-                                    }
-
-                                    newSecondImp.timeDateStamp = impDesc.timeDateStamp;
-
-                                    // Put in the new descriptor after the one we manage.
-                                    image.delayLoads.insert( this->dstImpDescIter + 1, std::move( newSecondImp ) );
-
-                                    // Done.
-                                }
-                            };
-                            delayedImpDescriptorHandler splitOp( *this, impDesc, archPointerSize, dstImpDescIter );
-
-                            removeImpDesc =
-                                InjectImportsWithExports(
-                                    exeImage,
-                                    moduleImage.exportDir, splitOp, calcRedirRef,
-                                    numOrdinalMatches, numNameMatches,
-                                    archPointerSize, requiresRelocations
-                                );
-                        }
+                        removeImpDesc =
+                            InjectImportsWithExports(
+                                exeImage,
+                                moduleImage.exportDir, splitOp, calcRedirRef,
+                                numOrdinalMatches, numNameMatches,
+                                archPointerSize, requiresRelocations
+                            );
                     }
 
                     if ( removeImpDesc )
                     {
+                        std::cout << "* terminated delay-load import module " << impDesc.DLLName << std::endl;
+
                         dstImpDescIter = exeImage.delayLoads.erase( dstImpDescIter );
                     }
                     else
