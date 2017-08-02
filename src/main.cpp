@@ -1096,8 +1096,6 @@ struct AssemblyEnvironment
             {
                 auto dstImpDescIter = exeImage.imports.begin();
 
-                size_t numExportFuncs = moduleImage.exportDir.functions.size();
-
                 while ( dstImpDescIter != exeImage.imports.end() )
                 {
                     PEFile::PEImportDesc& impDesc = *dstImpDescIter;
