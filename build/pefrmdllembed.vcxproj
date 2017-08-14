@@ -94,6 +94,7 @@
       <SDLCheck>false</SDLCheck>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <AdditionalIncludeDirectories>..\vendor\eirrepo\;..\vendor\peframework\include\;..\vendor\asmjit\src\;..\vendor\asmjitshared\include\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
     </ClCompile>
     <Link>
       <AdditionalLibraryDirectories>..\vendor\peframework\lib\$(Platform)\$(Configuration)\;..\vendor\asmjit\lib\$(Platform)\$(Configuration)\;..\vendor\asmjitshared\lib\$(Platform)\$(Configuration)\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
@@ -108,6 +109,7 @@
       <SDLCheck>false</SDLCheck>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <AdditionalIncludeDirectories>..\vendor\eirrepo\;..\vendor\peframework\include\;..\vendor\asmjit\src\;..\vendor\asmjitshared\include\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
     </ClCompile>
     <Link>
       <AdditionalLibraryDirectories>..\vendor\peframework\lib\$(Platform)\$(Configuration)\;..\vendor\asmjit\lib\$(Platform)\$(Configuration)\;..\vendor\asmjitshared\lib\$(Platform)\$(Configuration)\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
@@ -124,6 +126,7 @@
       <SDLCheck>false</SDLCheck>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <AdditionalIncludeDirectories>..\vendor\eirrepo\;..\vendor\peframework\include\;..\vendor\asmjit\src\;..\vendor\asmjitshared\include\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
@@ -142,6 +145,7 @@
       <SDLCheck>false</SDLCheck>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <AdditionalIncludeDirectories>..\vendor\eirrepo\;..\vendor\peframework\include\;..\vendor\asmjit\src\;..\vendor\asmjitshared\include\;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
