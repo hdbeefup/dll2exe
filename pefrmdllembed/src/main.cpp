@@ -946,7 +946,7 @@ struct AssemblyEnvironment
                 PEFile::PEExportDir::mappedName newNameMap;
                 newNameMap.name = nameMap.name;
                 newNameMap.nameAllocEntry = ResolvePEAllocation( nameMap.nameAllocEntry, resolveSectionLink );
-                exeImage.exportDir.funcNameMap.insert( std::make_pair( std::move( newNameMap ), funcOrd ) );
+                exeImage.exportDir.funcNameMap.insert( std::make_pair( std::move( newNameMap ), std::move( funcOrd ) ) );
             }
 
             // Rewrite things.
