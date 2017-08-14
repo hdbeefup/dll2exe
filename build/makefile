@@ -1,4 +1,5 @@
 CC := g++
+CCFLAGS := -std=c++14
 srcdir := $(CURDIR)/../src
 objdir := $(CURDIR)/../obj/linux
 sources := $(shell find $(srcdir) -name "*.cpp")
@@ -18,11 +19,11 @@ BUILD_DIR := \
 
 main : $(objects) $(headers) peframework.vendor asmjit.vendor asmjitshared.vendor ; \
     cd $(BUILD_DIR) ; \
-    $(CC) $(LIBDIRS) -o ../bin/pefrmdllembed $(objects) -l peframework -l asmjit -l asmjitshared 
+    $(CC) $(CCFLAGS) $(LIBDIRS) -o ../bin/pefrmdllembed $(objects) -l peframework -l asmjit -l asmjitshared 
 
 $(objdir)/%.o : $(srcdir)/% ; \
     mkdir -p $(dir $@) ; \
-    $(CC) -O3 -o $@ -c $< -Wno-invalid-offsetof $(INCLUDE) ;
+    $(CC) $(CCFLAGS) -O3 -o $@ -c $< -Wno-invalid-offsetof $(INCLUDE) ;
 
 %.vendor : ; \
     cd $(BUILD_DIR)/../vendor/$(patsubst %.vendor,%,$@)/build/ ; \
