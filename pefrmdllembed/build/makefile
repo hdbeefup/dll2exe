@@ -1,5 +1,5 @@
 CC := g++
-CCFLAGS := -std=c++14
+CCFLAGS := -std=c++17
 srcdir := $(CURDIR)/../src
 objdir := $(CURDIR)/../obj/linux
 sources := $(shell find $(srcdir) -name "*.cpp")
