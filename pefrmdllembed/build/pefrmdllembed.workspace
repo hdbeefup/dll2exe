@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<CodeBlocks_workspace_file>
+	<Workspace title="PE FIle DLL Merger">
+		<Project filename="pefrmdllembed.cbp">
+			<Depends filename="../vendor/peframework/build/peframework.cbp" />
+			<Depends filename="../vendor/asmjit/build/asmjit.cbp" />
+			<Depends filename="../vendor/asmjitshared/build/asmjitshared.cbp" />
+		</Project>
+		<Project filename="../vendor/peframework/build/peframework.cbp" />
+		<Project filename="../vendor/asmjit/build/asmjit.cbp" />
+		<Project filename="../vendor/asmjitshared/build/asmjitshared.cbp" />
+	</Workspace>
+</CodeBlocks_workspace_file>

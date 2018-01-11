@@ -48,7 +48,7 @@ inline void BufferPatternFind(
             const char *curPat = patterns[patIdx];
 
             size_t patternLen = (size_t)*curPat++;
-            
+
             bool curPatternMatch = true;
 
             size_t curIter = n;
@@ -230,7 +230,7 @@ struct resourceHelpers
         return hasChanged;
     }
 
-    // Clones a resource item 
+    // Clones a resource item
     template <typename sectResolver_t>
     static PEFile::PEResourceItem* CloneResourceItem( const sectResolver_t& sectResolver, const PEFile::PEResourceItem *srcItem )
     {
@@ -276,7 +276,7 @@ struct resourceHelpers
                 catch( ... )
                 {
                     delete newItem;
-                    
+
                     throw;
                 }
             });
@@ -297,7 +297,7 @@ static void WriteVirtualAddress( PEFile& image, PEFile::PESection *targetSect, s
     std::uint32_t itemRVA = ( targetSect->GetVirtualAddress() + sectOffset );
 
     targetSect->stream.Seek( sectOffset );
-    
+
     if ( archPointerSize == 4 )
     {
         targetSect->stream.WriteUInt32( (std::uint32_t)( virtualAddress ) );
@@ -317,7 +317,7 @@ static void WriteVirtualAddress( PEFile& image, PEFile::PESection *targetSect, s
         PEFile::PEBaseReloc::eRelocType relocType = PEFile::PEBaseReloc::GetRelocTypeForPointerSize( archPointerSize );
 
         if ( relocType != PEFile::PEBaseReloc::eRelocType::ABSOLUTE )
-        {   
+        {
             image.AddRelocation( itemRVA, relocType );
         }
     }
@@ -413,7 +413,7 @@ static inline bool InjectImportsWithExports(
         std::uint32_t ordinalOfImport = impFunc.ordinal_hint;
         const std::string& nameOfImport = impFunc.name;
 
-        const PEFile::PEExportDir::func *expFuncMatch = expFuncMatch = exportDir.ResolveExport( isOrdinalMatch, ordinalOfImport, nameOfImport );
+        const PEFile::PEExportDir::func *expFuncMatch = exportDir.ResolveExport( isOrdinalMatch, ordinalOfImport, nameOfImport );
 
         if ( expFuncMatch != NULL )
         {
@@ -436,7 +436,7 @@ static inline bool InjectImportsWithExports(
             std::uint32_t thunkTableOffset = (std::uint32_t)( archPointerSize * impFuncIter );
             {
                 PEFile::PESectionDataReference exeImageFuncRef = ResolvePEDataRedirect( expFuncMatch->expRef, sectResolver );
-                            
+
                 std::uint64_t exeImageFuncVA = ( exeImageFuncRef.GetRVA() + image.GetImageBase() );
 
                 PEFile::PESection *thunkSect = firstThunkRef.GetSection();
@@ -601,7 +601,7 @@ struct AssemblyEnvironment
         std::uint64_t modImageBase = moduleImage.GetImageBase();
 
         // Generate code along with binding.
-        
+
         // Perform binding of PE references.
         // We keep a list of all sections that we put into the executable image.
         // This is important to transfer all the remaining data that is tied to sections.
@@ -638,7 +638,7 @@ struct AssemblyEnvironment
 
             return -13;
         }
-        
+
         moduleImage.ForAllSections(
             [&]( PEFile::PESection *theSect )
         {
@@ -648,7 +648,7 @@ struct AssemblyEnvironment
             PEFile::PESection newSect;
             newSect.shortName = theSect->shortName;
             newSect.chars = theSect->chars;
-        
+
             size_t sectDataSize = (size_t)theSect->stream.Size();
 
             theSect->stream.Seek( 0 );
@@ -968,7 +968,7 @@ struct AssemblyEnvironment
                 newImports.DLLName = impDesc.DLLName;
                 newImports.DLLName_allocEntry = ResolvePEAllocation( impDesc.DLLName_allocEntry, resolveSectionLink );
                 newImports.DLLHandleAlloc = ResolvePEAllocation( impDesc.DLLHandleAlloc, resolveSectionLink );
-                    
+
                 // The IAT always needs special handling.
                 newImports.IATRef = ResolvePEDataRedirect( impDesc.IATRef, resolveSectionLink );
 
@@ -1005,7 +1005,7 @@ struct AssemblyEnvironment
         }
 
         bool hasStaticTLS = ( moduleImage.tlsInfo.addressOfIndexRef.GetSection() != NULL );
-        
+
         if ( hasStaticTLS )
         {
             std::cout << "WARNING: module image has static TLS; might not work as expected" << std::endl;
@@ -1233,7 +1233,7 @@ struct AssemblyEnvironment
                             const decltype( PEFile::delayLoads )::iterator& dstImpDescIter;
 
                             AINLINE delayedImpDescriptorHandler( AssemblyEnvironment& env, PEFile::PEDelayLoadDesc& impDesc, std::uint32_t archPointerSize, const decltype( PEFile::delayLoads )::iterator& dstImpDescIter )
-                                : impDesc( impDesc ), env( env ), dstImpDescIter( dstImpDescIter )
+                                : env( env ), impDesc( impDesc ), dstImpDescIter( dstImpDescIter )
                             {
                                 this->archPointerSize = archPointerSize;
                             }
@@ -1261,7 +1261,7 @@ struct AssemblyEnvironment
                             AINLINE void MoveIATBy( PEFile& image, std::uint32_t moveBytes )
                             {
                                 impDesc.IATRef = image.ResolveRVAToRef( impDesc.IATRef.GetRVA() + moveBytes );
-                                    
+
                                 // Move the other if it is available.
                                 PEFile::PESectionDataReference& unloadIAT = impDesc.unloadInfoTableRef;
 
@@ -1750,14 +1750,14 @@ int main( int argc, char *argv[] )
     // Create a nice debug string.
     {
         std::cout << "loading: \"" << inputExecImageName << "\"";
-             
+
         for ( unsigned int n = 0; n < numberModules; n++ )
         {
             const char *inputModImageName = toEmbedList[ n ];
 
             std::cout << ", \"" << inputModImageName << "\"";
         }
-            
+
         std::cout << std::endl << std::endl;
     }
 
@@ -1906,7 +1906,7 @@ int main( int argc, char *argv[] )
 
                     exeImage.imports.push_back( std::move( utilImports ) );
                 }
-            
+
                 if ( metaSection.IsEmpty() == false )
                 {
                     metaSection.Finalize();
