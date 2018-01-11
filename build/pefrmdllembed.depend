@@ -1,0 +1,364 @@
+# depslib dependency file v1.0
+1515688943 source:/mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/src/option.cpp
+	"option.h"
+
+1515688942 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/src/option.h
+	<string>
+
+1515693968 source:/mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/src/main.cpp
+	<peframework.h>
+	<asmjit/asmjit.h>
+	<unordered_map>
+	<fstream>
+	<asmjitshared.h>
+	<sdk/UniChar.h>
+	"option.h"
+	"peloader.serialize.h"
+
+1515688975 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/peframework/include/peframework.h
+	<cstddef>
+	<sdk/MacroUtils.h>
+	"peexcept.h"
+	"pestream.h"
+	"peloader.h"
+
+1515688969 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/eirrepo/sdk/MacroUtils.h
+
+1515688975 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/peframework/include/peexcept.h
+
+1515688975 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/peframework/include/pestream.h
+	<cstddef>
+	<sdk/MacroUtils.h>
+	<iostream>
+
+1515691538 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/peframework/include/peloader.h
+	"pestream.h"
+	<sdk/rwlist.hpp>
+	<sdk/MemoryRaw.h>
+	<sdk/MemoryUtils.h>
+	<sdk/MemoryUtils.stream.h>
+	<unordered_map>
+	<map>
+	<set>
+	<functional>
+	"peloader.common.h"
+
+1515691601 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/eirrepo/sdk/rwlist.hpp
+	<assert.h>
+
+1515688969 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/eirrepo/sdk/MemoryRaw.h
+	"MacroUtils.h"
+	<bitset>
+
+1515688969 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/eirrepo/sdk/MemoryUtils.h
+	<assert.h>
+	<list>
+	<vector>
+	"rwlist.hpp"
+	"MemoryRaw.h"
+	"DataUtil.h"
+	"MetaHelpers.h"
+	<atomic>
+	<type_traits>
+
+1515688969 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/eirrepo/sdk/DataUtil.h
+
+1515688969 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/eirrepo/sdk/MetaHelpers.h
+	<type_traits>
+
+1515688969 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/eirrepo/sdk/MemoryUtils.stream.h
+	<cstdint>
+	<cmath>
+	<cstring>
+	"MemoryRaw.h"
+	"Endian.h"
+	"MacroUtils.h"
+	<algorithm>
+
+1515688969 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/eirrepo/sdk/Endian.h
+	"MacroUtils.h"
+
+1515688975 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/peframework/include/peloader.common.h
+	"peexcept.h"
+	<sdk/MemoryUtils.h>
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/asmjit.h
+	"./base.h"
+	"./x86.h"
+	"./arm.h"
+
+1515688980 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base.h
+	"./base/arch.h"
+	"./base/assembler.h"
+	"./base/codebuilder.h"
+	"./base/codecompiler.h"
+	"./base/codeemitter.h"
+	"./base/codeholder.h"
+	"./base/constpool.h"
+	"./base/cpuinfo.h"
+	"./base/func.h"
+	"./base/globals.h"
+	"./base/inst.h"
+	"./base/logging.h"
+	"./base/operand.h"
+	"./base/osutils.h"
+	"./base/runtime.h"
+	"./base/simdtypes.h"
+	"./base/string.h"
+	"./base/utils.h"
+	"./base/vmem.h"
+	"./base/zone.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/arch.h
+	"../base/globals.h"
+	"../base/operand.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/globals.h
+	"../asmjit_build.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688980 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/asmjit_build.h
+	<windows.h>
+	<TargetConditionals.h>
+	<sys/types.h>
+	<limits.h>
+	<stdint.h>
+	<limits.h>
+	<stdarg.h>
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+	<algorithm>
+	<new>
+	<pthread.h>
+	"../../test/broken.h"
+
+1515688980 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/test/broken.h
+	<stdarg.h>
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/asmjit_apibegin.h
+	"./build.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/asmjit_apiend.h
+
+1515688980 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/operand.h
+	"../base/utils.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688980 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/utils.h
+	"../base/globals.h"
+	<intrin.h>
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/assembler.h
+	"../base/codeemitter.h"
+	"../base/codeholder.h"
+	"../base/operand.h"
+	"../base/simdtypes.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688980 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/codeemitter.h
+	"../base/arch.h"
+	"../base/codeholder.h"
+	"../base/operand.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688980 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/codeholder.h
+	"../base/arch.h"
+	"../base/func.h"
+	"../base/logging.h"
+	"../base/operand.h"
+	"../base/simdtypes.h"
+	"../base/utils.h"
+	"../base/zone.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/func.h
+	"../asmjit_build.h"
+	"../base/arch.h"
+	"../base/operand.h"
+	"../base/utils.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/logging.h
+	"../base/inst.h"
+	"../base/string.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/inst.h
+	"../base/cpuinfo.h"
+	"../base/operand.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/cpuinfo.h
+	"../base/arch.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/string.h
+	"../base/globals.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688980 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/simdtypes.h
+	"../base/globals.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/zone.h
+	"../base/utils.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/codebuilder.h
+	"../asmjit_build.h"
+	"../base/assembler.h"
+	"../base/codeholder.h"
+	"../base/constpool.h"
+	"../base/inst.h"
+	"../base/operand.h"
+	"../base/utils.h"
+	"../base/zone.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/constpool.h
+	"../base/zone.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688980 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/codecompiler.h
+	"../asmjit_build.h"
+	"../base/assembler.h"
+	"../base/codebuilder.h"
+	"../base/constpool.h"
+	"../base/func.h"
+	"../base/operand.h"
+	"../base/utils.h"
+	"../base/zone.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688980 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/osutils.h
+	"../base/globals.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/runtime.h
+	"../base/codeholder.h"
+	"../base/vmem.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688980 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/base/vmem.h
+	"../base/globals.h"
+	"../base/osutils.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/x86.h
+	"./base.h"
+	"./x86/x86assembler.h"
+	"./x86/x86builder.h"
+	"./x86/x86compiler.h"
+	"./x86/x86emitter.h"
+	"./x86/x86inst.h"
+	"./x86/x86misc.h"
+	"./x86/x86operand.h"
+
+1515688980 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/x86/x86assembler.h
+	"../base/assembler.h"
+	"../base/utils.h"
+	"../x86/x86emitter.h"
+	"../x86/x86operand.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688980 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/x86/x86emitter.h
+	"../base/codeemitter.h"
+	"../x86/x86inst.h"
+	"../x86/x86operand.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688980 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/x86/x86inst.h
+	"../base/assembler.h"
+	"../base/inst.h"
+	"../base/operand.h"
+	"../base/utils.h"
+	"../x86/x86globals.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/x86/x86globals.h
+	"../base/globals.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/x86/x86operand.h
+	"../base/arch.h"
+	"../base/operand.h"
+	"../base/utils.h"
+	"../x86/x86globals.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/x86/x86builder.h
+	"../asmjit_build.h"
+	"../base/codebuilder.h"
+	"../base/simdtypes.h"
+	"../x86/x86emitter.h"
+	"../x86/x86misc.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688980 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/x86/x86misc.h
+	"../x86/x86operand.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688980 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/x86/x86compiler.h
+	"../asmjit_build.h"
+	"../base/codecompiler.h"
+	"../base/simdtypes.h"
+	"../x86/x86emitter.h"
+	"../x86/x86misc.h"
+	"../asmjit_apibegin.h"
+	"../asmjit_apiend.h"
+
+1515688979 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjit/src/asmjit/arm.h
+	"./base.h"
+	"./arm/armassembler.h"
+	"./arm/armbuilder.h"
+	"./arm/armcompiler.h"
+	"./arm/arminst.h"
+	"./arm/armoperand.h"
+
+1515688985 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/asmjitshared/include/asmjitshared.h
+
+1515688969 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/eirrepo/sdk/UniChar.h
+	<cstdint>
+	"Endian.h"
+	<locale>
+	<type_traits>
+	<limits>
+	"UniChar.strmodel.h"
+
+1515688969 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/eirrepo/sdk/UniChar.strmodel.h
+
+1515688975 /mnt/c/Users/The_GTA/Desktop/pefrm-units/pefrmdllembed/vendor/peframework/include/peloader.serialize.h
+
