@@ -114,9 +114,9 @@ inline void BufferPatternFind(
 // Embed a directory entry into the executable.
 struct resourceHelpers
 {
-    static std::wstring AppendPath( const std::wstring& curPath, std::wstring nameToAppend )
+    static peString <wchar_t> AppendPath( const peString <wchar_t>& curPath, peString <wchar_t> nameToAppend )
     {
-        if ( curPath.empty() )
+        if ( curPath.IsEmpty() )
         {
             return nameToAppend;
         }
@@ -125,7 +125,7 @@ struct resourceHelpers
     }
 
     template <typename sectResolver_t>
-    static bool EmbedResourceDirectoryInto( const std::wstring& curPath, const sectResolver_t& sectResolver, PEFile::PEResourceDir& into, const PEFile::PEResourceDir& toEmbed )
+    static bool EmbedResourceDirectoryInto( const peString <wchar_t>& curPath, const sectResolver_t& sectResolver, PEFile::PEResourceDir& into, const PEFile::PEResourceDir& toEmbed )
     {
         bool hasChanged = false;
 
@@ -134,11 +134,11 @@ struct resourceHelpers
         {
             PEFile::PEResourceItem *resItem = into.FindItem( hasIdentifierName, embedItem->name, embedItem->identifier );
 
-            const std::wstring newPath = AppendPath( curPath, embedItem->GetName() );
+            const peString <wchar_t> newPath = AppendPath( curPath, embedItem->GetName() );
 
             if ( !resItem )
             {
-                std::wcout << "* merging resource tree '" << newPath << "'" << std::endl;
+                std::wcout << L"* merging resource tree '" << newPath.GetConstString() << L"'" << std::endl;
 
                 // Create it if not there yet.
                 resItem = CloneResourceItem( sectResolver, embedItem );
@@ -186,7 +186,7 @@ struct resourceHelpers
                 if ( wantsReplace )
                 {
                     // Give a warning to the user that we replace a resource.
-                    std::wcout << L"* replacing resource item '" << newPath << L"'" << std::endl;
+                    std::wcout << L"* replacing resource item '" << newPath.GetConstString() << L"'" << std::endl;
 
                     hasChanged = true;
 
@@ -234,7 +234,7 @@ struct resourceHelpers
     template <typename sectResolver_t>
     static PEFile::PEResourceItem* CloneResourceItem( const sectResolver_t& sectResolver, const PEFile::PEResourceItem *srcItem )
     {
-        PEFile::PEResourceItem *itemOut = NULL;
+        PEFile::PEResourceItem *itemOut = nullptr;
 
         PEFile::PEResourceItem::eType srcItemType = srcItem->itemType;
 
@@ -328,7 +328,7 @@ static inline bool PutSplitIntoImports( PEFile& image, size_t& splitIndex, std::
 {
     // Returns true if the import descriptor should be removed.
 
-    size_t numImpFuncs = splitOperator.GetImportFunctions().size();
+    size_t numImpFuncs = splitOperator.GetImportFunctions().GetCount();
 
     if ( numImpFuncs <= splitIndex )
     {
@@ -399,7 +399,7 @@ static inline bool InjectImportsWithExports(
 
     while ( true )
     {
-        size_t numImpFuncs = impFuncs.size();
+        size_t numImpFuncs = impFuncs.GetCount();
 
         if ( impFuncIter >= numImpFuncs )
         {
@@ -411,11 +411,11 @@ static inline bool InjectImportsWithExports(
 
         bool isOrdinalMatch = impFunc.isOrdinalImport;
         std::uint32_t ordinalOfImport = impFunc.ordinal_hint;
-        const std::string& nameOfImport = impFunc.name;
+        const peString <char>& nameOfImport = impFunc.name;
 
         const PEFile::PEExportDir::func *expFuncMatch = exportDir.ResolveExport( isOrdinalMatch, ordinalOfImport, nameOfImport );
 
-        if ( expFuncMatch != NULL )
+        if ( expFuncMatch != nullptr )
         {
             // Keep track of change count.
             if ( isOrdinalMatch )
@@ -426,7 +426,7 @@ static inline bool InjectImportsWithExports(
             }
             else
             {
-                std::cout << "* by name " << nameOfImport << std::endl;
+                std::cout << "* by name " << nameOfImport.GetConstString() << std::endl;
 
                 numNameMatches++;
             }
@@ -442,7 +442,7 @@ static inline bool InjectImportsWithExports(
                 PEFile::PESection *thunkSect = firstThunkRef.GetSection();
 
                 // There should not be a case where import entries come without thunk RVAs.
-                assert( thunkSect != NULL );
+                assert( thunkSect != nullptr );
 
                 std::uint32_t thunkSectOffset = ( firstThunkRef.GetSectionOffset() + thunkTableOffset );
 
@@ -475,7 +475,7 @@ static inline PEFile::PESectionDataReference ResolvePEDataRedirect( const PEFile
 {
     PEFile::PESection *srcSect = srcRef.GetSection();
 
-    if ( srcSect == NULL )
+    if ( srcSect == nullptr )
     {
         return PEFile::PESectionDataReference();
     }
@@ -491,7 +491,7 @@ static inline PEFile::PESectionAllocation ResolvePEAllocation( const PEFile::PES
 {
     PEFile::PESection *srcSect = srcAlloc.GetSection();
 
-    if ( srcSect == NULL )
+    if ( srcSect == nullptr )
     {
         return PEFile::PESectionAllocation();
     }
@@ -510,7 +510,7 @@ static inline std::uint32_t ResolvePESectionRVA( const PEFile::PESectionDataRefe
 {
     PEFile::PESection *srcSect = srcRef.GetSection();
 
-    if ( srcSect == NULL )
+    if ( srcSect == nullptr )
     {
         throw runtime_exception( -20, "attempt to resolve unbound RVA" );
     }
@@ -534,7 +534,7 @@ struct AssemblyEnvironment
             // We spawn an abs2abs relocation entry.
             asmjit::CodeHolder *code = this->getCode();
 
-            asmjit::RelocEntry *reloc = NULL;
+            asmjit::RelocEntry *reloc = nullptr;
             code->newRelocEntry( &reloc, asmjit::RelocEntry::kTypeAbsToAbs, (std::uint32_t)immLen );
 
             if ( reloc )
@@ -639,10 +639,13 @@ struct AssemblyEnvironment
             return -13;
         }
 
-        moduleImage.ForAllSections(
-            [&]( PEFile::PESection *theSect )
+        PEFile::sectionIter_t iter = moduleImage.GetSectionIterator();
+
+        while ( !iter.IsEnd() )
         {
-            std::cout << "* " << theSect->shortName << std::endl;
+            PEFile::PESection *theSect = iter.Resolve();
+
+            std::cout << "* " << theSect->shortName.GetConstString() << std::endl;
 
             // Create a copy of the section.
             PEFile::PESection newSect;
@@ -667,7 +670,7 @@ struct AssemblyEnvironment
 
             PEFile::PESection *refInside = exeImage.PlaceSection( std::move( newSect ) );
 
-            if ( refInside == NULL )
+            if ( refInside == nullptr )
             {
                 throw runtime_exception( -14, "fatal: failed to allocate module section in executable image" );
             }
@@ -676,7 +679,9 @@ struct AssemblyEnvironment
 
             // Remember this link.
             sectLinkMap[ theSect ] = std::move( sectInsideRef );
-        });
+
+            iter.Increment();
+        }
 
         std::uint64_t exeModuleBase = exeImage.GetImageBase();
 
@@ -839,11 +844,14 @@ struct AssemblyEnvironment
             // Finally we write the section headers.
             // Those might actually be important, who knows.
             {
-                moduleImage.ForAllSections(
-                    [&]( const PEFile::PESection *theSect )
+                PEFile::sectionIter_t iter = moduleImage.GetSectionIterator();
+
+                while ( !iter.IsEnd() )
                 {
+                    PEFile::PESection *theSect = iter.Resolve();
+
                     PEStructures::IMAGE_SECTION_HEADER sectHeader;
-                    strncpy( (char*)sectHeader.Name, theSect->shortName.c_str(), countof(sectHeader.Name) );
+                    strncpy( (char*)sectHeader.Name, theSect->shortName.GetConstString(), countof(sectHeader.Name) );
                     sectHeader.Misc.VirtualSize = theSect->GetVirtualSize();
                     // we actually have to write the old information!
                     // which is very useless at this point, unless you know what you are doing.
@@ -857,7 +865,9 @@ struct AssemblyEnvironment
 
                     // Write.
                     pedataSect.stream.WriteStruct( sectHeader );
-                });
+
+                    iter.Increment();
+                }
             }
 
             // Embed the section, if it fits. Otherwise we have a potential disaster.
@@ -871,7 +881,7 @@ struct AssemblyEnvironment
 
                 PEFile::PESection *refInside = exeImage.PlaceSection( std::move( pedataSect ) );
 
-                if ( refInside == NULL )
+                if ( refInside == nullptr )
                 {
                     std::cout << "WARNING: failed to embed module image PE headers (.pedata); module might not work properly" << std::endl;
                 }
@@ -879,7 +889,7 @@ struct AssemblyEnvironment
         }
 
         // Embed all import directories.
-        if ( moduleImage.imports.empty() == false )
+        if ( moduleImage.imports.GetCount() != 0 )
         {
             std::cout << "embedding import directories" << std::endl;
 
@@ -891,7 +901,7 @@ struct AssemblyEnvironment
                 newImports.DLLName = impDesc.DLLName;
                 newImports.DLLName_allocEntry = ResolvePEAllocation( impDesc.DLLName_allocEntry, resolveSectionLink );
 
-                std::cout << "* " << impDesc.DLLName << std::endl;
+                std::cout << "* " << impDesc.DLLName.GetConstString() << std::endl;
 
                 // Take over all import entries from the module.
                 newImports.funcs = PEFile::PEImportDesc::CreateEquivalentImportsList( impDesc.funcs );
@@ -909,7 +919,7 @@ struct AssemblyEnvironment
 
                 newImports.firstThunkRef.GetSection()->chars.sect_mem_write = true;
 
-                exeImage.imports.push_back( std::move( newImports ) );
+                exeImage.imports.AddToBack( std::move( newImports ) );
             }
 
             // Make sure we rewrite the imports directory.
@@ -917,12 +927,12 @@ struct AssemblyEnvironment
         }
 
         // Just for the heck of it we could embed exports aswell.
-        if ( doTakeoverExports && moduleImage.exportDir.functions.empty() == false )
+        if ( doTakeoverExports && moduleImage.exportDir.functions.GetCount() != 0 )
         {
             std::cout << "embedding export functions" << std::endl;
 
             // First just take over exports.
-            size_t ordInputBase = exeImage.exportDir.functions.size();
+            size_t ordInputBase = exeImage.exportDir.functions.GetCount();
 
             for ( const PEFile::PEExportDir::func& expEntry : moduleImage.exportDir.functions )
             {
@@ -932,21 +942,21 @@ struct AssemblyEnvironment
                 newExpEntry.isForwarder = expEntry.isForwarder;
 
                 // Add it to our exports.
-                exeImage.exportDir.functions.push_back( std::move( newExpEntry ) );
+                exeImage.exportDir.functions.AddToBack( std::move( newExpEntry ) );
             }
 
             // Next put all the name mappings, too.
-            for ( const auto& nameMapIter : moduleImage.exportDir.funcNameMap )
+            for ( auto *nameMapIter : moduleImage.exportDir.funcNameMap )
             {
-                const PEFile::PEExportDir::mappedName& nameMap = nameMapIter.first;
+                const PEFile::PEExportDir::mappedName& nameMap = nameMapIter->GetKey();
 
-                size_t funcOrd = ( ordInputBase + nameMapIter.second );
+                size_t funcOrd = ( ordInputBase + nameMapIter->GetValue() );
 
                 // Just take it over.
                 PEFile::PEExportDir::mappedName newNameMap;
                 newNameMap.name = nameMap.name;
                 newNameMap.nameAllocEntry = ResolvePEAllocation( nameMap.nameAllocEntry, resolveSectionLink );
-                exeImage.exportDir.funcNameMap.insert( std::make_pair( std::move( newNameMap ), std::move( funcOrd ) ) );
+                exeImage.exportDir.funcNameMap.Set( std::move( newNameMap ), std::move( funcOrd ) );
             }
 
             // Rewrite things.
@@ -956,7 +966,7 @@ struct AssemblyEnvironment
         }
 
         // Embed delay import directories aswell.
-        if ( moduleImage.delayLoads.empty() == false )
+        if ( moduleImage.delayLoads.GetCount() != 0 )
         {
             std::cout << "embedding delay-load import directories" << std::endl;
 
@@ -984,7 +994,7 @@ struct AssemblyEnvironment
                 //TODO: optimize this by acknowledging the allocations of DLLName and importNames in the redirected sections.
 
                 // Take it over.
-                exeImage.delayLoads.push_back( std::move( newImports ) );
+                exeImage.delayLoads.AddToBack( std::move( newImports ) );
             }
         }
 
@@ -995,7 +1005,7 @@ struct AssemblyEnvironment
 
             // We merge things.
             bool hasChanged =
-                resourceHelpers::EmbedResourceDirectoryInto( std::wstring(), resolveSectionLink, exeImage.resourceRoot, moduleImage.resourceRoot );
+                resourceHelpers::EmbedResourceDirectoryInto( peString <wchar_t> (), resolveSectionLink, exeImage.resourceRoot, moduleImage.resourceRoot );
 
             if ( hasChanged )
             {
@@ -1004,7 +1014,7 @@ struct AssemblyEnvironment
             }
         }
 
-        bool hasStaticTLS = ( moduleImage.tlsInfo.addressOfIndexRef.GetSection() != NULL );
+        bool hasStaticTLS = ( moduleImage.tlsInfo.addressOfIndexRef.GetSection() != nullptr );
 
         if ( hasStaticTLS )
         {
@@ -1016,12 +1026,12 @@ struct AssemblyEnvironment
         // Relocate the module pointers properly. We have to solve two problems:
         // 1) rebase the offsets to the new executable.
         // 2) identify each pointer's section and redirect it into the new layout
-        for ( const std::pair <const std::uint32_t, PEFile::PEBaseReloc>& modRelocPair : moduleImage.baseRelocs )
+        for ( auto *modRelocNode : moduleImage.baseRelocs )
         {
             // Calculate the offset of this relocation chunk, all entries base off of it.
-            std::uint32_t relocChunkOffset = ( modRelocPair.first * PEFile::baserelocChunkSize );
+            std::uint32_t relocChunkOffset = ( modRelocNode->GetKey() * PEFile::baserelocChunkSize );
 
-            const PEFile::PEBaseReloc& modRelocChunk = modRelocPair.second;
+            const PEFile::PEBaseReloc& modRelocChunk = modRelocNode->GetValue();
 
             for ( const PEFile::PEBaseReloc::item& modRelocItem : modRelocChunk.items )
             {
@@ -1029,7 +1039,7 @@ struct AssemblyEnvironment
 
                 // Find out what section this relocation points to.
                 std::uint32_t modRelocSectOffset;
-                PEFile::PESection *modRelocSect = moduleImage.FindSectionByRVA( modRelocRVA, NULL, &modRelocSectOffset );
+                PEFile::PESection *modRelocSect = moduleImage.FindSectionByRVA( modRelocRVA, nullptr, &modRelocSectOffset );
 
                 if ( modRelocSect )
                 {
@@ -1107,27 +1117,28 @@ struct AssemblyEnvironment
             // directories in the thunk so that we can write into the loader address during
             // entry point.
             {
-                auto dstImpDescIter = exeImage.imports.begin();
+                size_t dstImpDescIter = 0;
+                size_t numImportDescs = exeImage.imports.GetCount();
 
-                while ( dstImpDescIter != exeImage.imports.end() )
+                while ( dstImpDescIter < numImportDescs )
                 {
-                    PEFile::PEImportDesc& impDesc = *dstImpDescIter;
+                    PEFile::PEImportDesc& impDesc = exeImage.imports[ dstImpDescIter ];
 
                     bool removeImpDesc = false;
 
                     // Do things for matching import descriptors only.
-                    if ( UniversalCompareStrings(
-                            impDesc.DLLName.c_str(), impDesc.DLLName.size(),
-                            moduleImageName, strlen(moduleImageName),
+                    if ( BoundedStringEqual(
+                            impDesc.DLLName.GetConstString(), impDesc.DLLName.GetLength(),
+                            moduleImageName,
                             false ) )
                     {
                         struct basicImpDescriptorHandler
                         {
                             PEFile::PEImportDesc& impDesc;
                             std::uint32_t archPointerSize;
-                            const decltype( PEFile::imports )::iterator& dstImpDescIter;
+                            size_t dstImpDescIter;
 
-                            AINLINE basicImpDescriptorHandler( PEFile::PEImportDesc& impDesc, const decltype( PEFile::imports )::iterator& dstImpDescIter, std::uint32_t archPointerSize )
+                            AINLINE basicImpDescriptorHandler( PEFile::PEImportDesc& impDesc, size_t dstImpDescIter, std::uint32_t archPointerSize )
                                 : impDesc( impDesc ), dstImpDescIter( dstImpDescIter )
                             {
                                 this->archPointerSize = archPointerSize;
@@ -1139,13 +1150,9 @@ struct AssemblyEnvironment
                                 PEFile::PEImportDesc newSecondDesc;
                                 newSecondDesc.DLLName = impDesc.DLLName;
                                 newSecondDesc.DLLName_allocEntry = impDesc.DLLName_allocEntry.CloneOnlyFinal();
-                                newSecondDesc.funcs.reserve( functake_count );
-                                {
-                                    auto beginMoveIter = std::make_move_iterator( impDesc.funcs.begin() + functake_idx );
-                                    auto endMoveIter = ( beginMoveIter + functake_count );
 
-                                    newSecondDesc.funcs.insert( newSecondDesc.funcs.begin(), beginMoveIter, endMoveIter );
-                                }
+                                newSecondDesc.funcs.InsertMove( 0, &impDesc.funcs[ functake_idx ], functake_count );
+
                                 // Offset the names allocation entry to the right point.
                                 if ( PEFile::PESection *impNamesSect = impDesc.impNameArrayAllocEntry.GetSection() )
                                 {
@@ -1161,7 +1168,7 @@ struct AssemblyEnvironment
                                 newSecondDesc.firstThunkRef = image.ResolveRVAToRef( impDesc.firstThunkRef.GetRVA() + thunkRefStartOffset );
 
                                 // Insert the new import descriptor after our.
-                                image.imports.insert( this->dstImpDescIter + 1, std::move( newSecondDesc ) );
+                                image.imports.Insert( this->dstImpDescIter + 1, std::move( newSecondDesc ) );
                             }
 
                             AINLINE PEFile::PEImportDesc::functions_t& GetImportFunctions( void )
@@ -1176,7 +1183,7 @@ struct AssemblyEnvironment
 
                             AINLINE void TrimFirstDescriptor( size_t trimTo )
                             {
-                                impDesc.funcs.resize( trimTo );
+                                impDesc.funcs.Resize( trimTo );
                             }
 
                             AINLINE void MoveIATBy( PEFile& image, std::uint32_t moveBytes )
@@ -1186,7 +1193,7 @@ struct AssemblyEnvironment
 
                             AINLINE void RemoveFirstEntry( void )
                             {
-                                impDesc.funcs.erase( impDesc.funcs.begin() );
+                                impDesc.funcs.RemoveByIndex( 0 );
                             }
                         };
                         basicImpDescriptorHandler splitOp( impDesc, dstImpDescIter, archPointerSize );
@@ -1201,9 +1208,11 @@ struct AssemblyEnvironment
 
                     if ( removeImpDesc )
                     {
-                        std::cout << "* terminated import module " << impDesc.DLLName << std::endl;
+                        std::cout << "* terminated import module " << impDesc.DLLName.GetConstString() << std::endl;
 
-                        dstImpDescIter = exeImage.imports.erase( dstImpDescIter );
+                        exeImage.imports.RemoveByIndex( dstImpDescIter );
+
+                        numImportDescs--;
                     }
                     else
                     {
@@ -1214,25 +1223,26 @@ struct AssemblyEnvironment
 
             // Also do the delayed import descriptors, which should be possible.
             {
-                auto dstImpDescIter = exeImage.delayLoads.begin();
+                size_t dstImpDescIter = 0;
+                size_t numImportDescs = exeImage.delayLoads.GetCount();
 
-                while ( dstImpDescIter != exeImage.delayLoads.end() )
+                while ( dstImpDescIter < numImportDescs )
                 {
                     bool removeImpDesc = false;
 
                     // Process this import descriptor.
-                    PEFile::PEDelayLoadDesc& impDesc = *dstImpDescIter;
+                    PEFile::PEDelayLoadDesc& impDesc = exeImage.delayLoads[ dstImpDescIter ];
 
-                    if ( UniversalCompareStrings( impDesc.DLLName.c_str(), impDesc.DLLName.size(), moduleImageName, strlen(moduleImageName), false ) )
+                    if ( BoundedStringEqual( impDesc.DLLName.GetConstString(), impDesc.DLLName.GetLength(), moduleImageName, false ) )
                     {
                         struct delayedImpDescriptorHandler
                         {
                             AssemblyEnvironment& env;
                             PEFile::PEDelayLoadDesc& impDesc;
                             std::uint32_t archPointerSize;
-                            const decltype( PEFile::delayLoads )::iterator& dstImpDescIter;
+                            size_t dstImpDescIter;
 
-                            AINLINE delayedImpDescriptorHandler( AssemblyEnvironment& env, PEFile::PEDelayLoadDesc& impDesc, std::uint32_t archPointerSize, const decltype( PEFile::delayLoads )::iterator& dstImpDescIter )
+                            AINLINE delayedImpDescriptorHandler( AssemblyEnvironment& env, PEFile::PEDelayLoadDesc& impDesc, std::uint32_t archPointerSize, size_t dstImpDescIter )
                                 : env( env ), impDesc( impDesc ), dstImpDescIter( dstImpDescIter )
                             {
                                 this->archPointerSize = archPointerSize;
@@ -1250,12 +1260,12 @@ struct AssemblyEnvironment
 
                             AINLINE void TrimFirstDescriptor( size_t trimTo )
                             {
-                                impDesc.importNames.resize( trimTo );
+                                impDesc.importNames.Resize( trimTo );
                             }
 
                             AINLINE void RemoveFirstEntry( void )
                             {
-                                impDesc.importNames.erase( impDesc.importNames.begin() );
+                                impDesc.importNames.RemoveByIndex( 0 );
                             }
 
                             AINLINE void MoveIATBy( PEFile& image, std::uint32_t moveBytes )
@@ -1265,7 +1275,7 @@ struct AssemblyEnvironment
                                 // Move the other if it is available.
                                 PEFile::PESectionDataReference& unloadIAT = impDesc.unloadInfoTableRef;
 
-                                if ( unloadIAT.GetSection() != NULL )
+                                if ( unloadIAT.GetSection() != nullptr )
                                 {
                                     unloadIAT = image.ResolveRVAToRef( unloadIAT.GetRVA() + moveBytes );
                                 }
@@ -1283,13 +1293,8 @@ struct AssemblyEnvironment
                                 newSecondImp.IATRef = image.ResolveRVAToRef( impDesc.IATRef.GetRVA() + thunkRefStartOffset );
 
                                 // Copy over the import names aswell.
-                                newSecondImp.importNames.reserve( functake_count );
-                                {
-                                    auto beginMoveIter = std::make_move_iterator( impDesc.importNames.begin() + functake_idx );
-                                    auto endMoveIter = ( beginMoveIter + functake_count );
+                                newSecondImp.importNames.InsertMove( 0, &impDesc.importNames[ functake_idx ], functake_count );
 
-                                    newSecondImp.importNames.insert( newSecondImp.importNames.begin(), beginMoveIter, endMoveIter );
-                                }
                                 // Take over the allocation entries.
                                 if ( PEFile::PESection *impNamesSect = impDesc.importNamesAllocEntry.GetSection() )
                                 {
@@ -1305,7 +1310,7 @@ struct AssemblyEnvironment
                                 {
                                     PEFile::PESectionDataReference& unloadIAT = impDesc.unloadInfoTableRef;
 
-                                    if ( unloadIAT.GetSection() != NULL )
+                                    if ( unloadIAT.GetSection() != nullptr )
                                     {
                                         unloadIAT = image.ResolveRVAToRef( unloadIAT.GetRVA() + thunkRefStartOffset );
                                     }
@@ -1314,7 +1319,7 @@ struct AssemblyEnvironment
                                 newSecondImp.timeDateStamp = impDesc.timeDateStamp;
 
                                 // Put in the new descriptor after the one we manage.
-                                image.delayLoads.insert( this->dstImpDescIter + 1, std::move( newSecondImp ) );
+                                image.delayLoads.Insert( this->dstImpDescIter + 1, std::move( newSecondImp ) );
 
                                 // Done.
                             }
@@ -1332,9 +1337,11 @@ struct AssemblyEnvironment
 
                     if ( removeImpDesc )
                     {
-                        std::cout << "* terminated delay-load import module " << impDesc.DLLName << std::endl;
+                        std::cout << "* terminated delay-load import module " << impDesc.DLLName.GetConstString() << std::endl;
 
-                        dstImpDescIter = exeImage.delayLoads.erase( dstImpDescIter );
+                        exeImage.delayLoads.RemoveByIndex( dstImpDescIter );
+
+                        numImportDescs--;
                     }
                     else
                     {
@@ -1356,7 +1363,7 @@ struct AssemblyEnvironment
         // TODO: generate all code that depends on RVAs over here.
 
         // Do we need TLS data?
-        if ( moduleImage.tlsInfo.startOfRawDataRef.GetSection() != NULL )
+        if ( moduleImage.tlsInfo.startOfRawDataRef.GetSection() != nullptr )
         {
             std::cout << "patching static TLS data references" << std::endl;
 
@@ -1372,9 +1379,12 @@ struct AssemblyEnvironment
 
             // We do a simple patch of all TLS references to point directly inside the TLS data array.
             // This will disable all thread-local abilities but it will make the embedding work.
-            moduleImage.ForAllSections(
-                [&]( PEFile::PESection *modSect )
+            PEFile::sectionIter_t iter = moduleImage.GetSectionIterator();
+
+            for ( ; !iter.IsEnd(); iter.Increment() )
             {
+                PEFile::PESection *modSect = iter.Resolve();
+
                 auto findIter = sectLinkMap.find( modSect );
 
                 assert( findIter != sectLinkMap.end() );
@@ -1383,7 +1393,9 @@ struct AssemblyEnvironment
 
                 // Only process sections that do contain executable code.
                 if ( exeSect->chars.sect_mem_execute == false )
-                    return;
+                {
+                    continue;
+                }
 
                 // Depending on architecture...
                 if ( genCodeArch == asmjit::ArchInfo::kTypeX86 )
@@ -1432,7 +1444,7 @@ struct AssemblyEnvironment
                 {
                     assert( 0 );
                 }
-            });
+            }
         }
 
         // So if we have TLS indices, we have to use the utility thunk to allocate into the array.
@@ -1518,7 +1530,7 @@ struct AssemblyEnvironment
                     std::uint32_t modrvaToCallback = (std::uint32_t)( callbackPtr - modImageBase );
 
                     std::uint32_t modTargetSectIntOff;
-                    PEFile::PESection *modTargetSect = moduleImage.FindSectionByRVA( modrvaToCallback, NULL, &modTargetSectIntOff );
+                    PEFile::PESection *modTargetSect = moduleImage.FindSectionByRVA( modrvaToCallback, nullptr, &modTargetSectIntOff );
 
                     if ( modTargetSect )
                     {
@@ -1564,7 +1576,7 @@ struct AssemblyEnvironment
         // If we have no entry point then we do not embed a call to it.
         const PEFile::PESectionDataReference& modEntryPointRef = moduleImage.peOptHeader.addressOfEntryPointRef;
 
-        if ( modEntryPointRef.GetSection() != NULL )
+        if ( modEntryPointRef.GetSection() != nullptr )
         {
             // Call into the DLL entry point with the default parameters.
             std::uint32_t rvaToDLLEntryPoint = ResolvePESectionRVA( modEntryPointRef, resolveSectionLink );
@@ -1893,18 +1905,18 @@ int main( int argc, char *argv[] )
                         fVirtualProtect.name = "VirtualProtect";
                         fVirtualProtect.isOrdinalImport = false;
                         fVirtualProtect.ordinal_hint = 0;
-                        utilImports.funcs.push_back( std::move( fVirtualProtect ) );
+                        utilImports.funcs.AddToBack( std::move( fVirtualProtect ) );
                     }
 
                     // Give it some memory region.
-                    size_t utilThunkSize = ( thunkEntrySize * utilImports.funcs.size() );
+                    size_t utilThunkSize = ( thunkEntrySize * utilImports.funcs.GetCount() );
 
                     metaSection.Allocate( utilThunk, (std::uint32_t)utilThunkSize, (std::uint32_t)thunkEntrySize );
 
                     // We want to link the thunk into the imports desc.
                     utilImports.firstThunkRef = utilThunk;
 
-                    exeImage.imports.push_back( std::move( utilImports ) );
+                    exeImage.imports.AddToBack( std::move( utilImports ) );
                 }
 
                 if ( metaSection.IsEmpty() == false )
