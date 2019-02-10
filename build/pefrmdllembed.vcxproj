@@ -157,8 +157,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\src\**\*.cpp" />
-  </ItemGroup>
-  <ItemGroup>
     <ClInclude Include="..\src\**\*.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

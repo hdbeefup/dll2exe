@@ -22,7 +22,7 @@ private:
         }
         else
         {
-            return NULL;
+            return nullptr;
         }
     }
 
