@@ -1168,7 +1168,7 @@ struct AssemblyEnvironment
                                 newSecondDesc.firstThunkRef = image.ResolveRVAToRef( impDesc.firstThunkRef.GetRVA() + thunkRefStartOffset );
 
                                 // Insert the new import descriptor after our.
-                                image.imports.Insert( this->dstImpDescIter + 1, std::move( newSecondDesc ) );
+                                image.imports.InsertMove( this->dstImpDescIter + 1, std::move( newSecondDesc ) );
                             }
 
                             AINLINE PEFile::PEImportDesc::functions_t& GetImportFunctions( void )
@@ -1319,7 +1319,7 @@ struct AssemblyEnvironment
                                 newSecondImp.timeDateStamp = impDesc.timeDateStamp;
 
                                 // Put in the new descriptor after the one we manage.
-                                image.delayLoads.Insert( this->dstImpDescIter + 1, std::move( newSecondImp ) );
+                                image.delayLoads.InsertMove( this->dstImpDescIter + 1, std::move( newSecondImp ) );
 
                                 // Done.
                             }
