@@ -11,7 +11,7 @@ Find plugin-sdk here: https://github.com/DK22Pac/plugin-sdk
 - VC_PedPainting (compatible with VC 1.0 US): Tommy is painted red ingame
 
 Virus scan report:
-https://www.virustotal.com/gui/file/aefeb77be65d05a70da27f2916c6b895bbee54f460d928fc6c175795b3130f12/detection
+win32: https://www.virustotal.com/gui/file/b05784aaec66b9eb82111ce345c68e47d39d3c1004755ec8838b08891508b632/detection
 
 ==========================
 HOW TO USE
