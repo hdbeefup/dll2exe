@@ -150,7 +150,7 @@ struct resourceHelpers
                 }
                 catch( ... )
                 {
-                    delete resItem;
+                    PEFile::PEResourceDir::DestroyItem( resItem );
 
                     throw;
                 }
@@ -192,7 +192,7 @@ struct resourceHelpers
 
                     into.RemoveItem( resItem );
 
-                    delete resItem;
+                    PEFile::PEResourceDir::DestroyItem( resItem );
 
                     resItem = CloneResourceItem( sectResolver, embedItem );
 
@@ -202,7 +202,7 @@ struct resourceHelpers
                     }
                     catch( ... )
                     {
-                        delete resItem;
+                        PEFile::PEResourceDir::DestroyItem( resItem );
 
                         throw;
                     }
@@ -249,7 +249,7 @@ struct resourceHelpers
             dataItem.codePage = srcDataItem->codePage;
             dataItem.reserved = srcDataItem->reserved;
 
-            itemOut = new PEFile::PEResourceInfo( std::move( dataItem ) );
+            itemOut = PEFile::PEResourceDir::CreateData( std::move( dataItem ) );
         }
         else if ( srcItemType == PEFile::PEResourceItem::eType::DIRECTORY )
         {
@@ -275,13 +275,13 @@ struct resourceHelpers
                 }
                 catch( ... )
                 {
-                    delete newItem;
+                    PEFile::PEResourceDir::DestroyItem( newItem );
 
                     throw;
                 }
             });
 
-            itemOut = new PEFile::PEResourceDir( std::move( dirItem ) );
+            itemOut = PEFile::PEResourceDir::CreateDir( std::move( dirItem ) );
         }
         else
         {
@@ -566,7 +566,7 @@ struct AssemblyEnvironment
         return;
     }
 
-    inline int EmbedModuleIntoExecutable( PEFile& moduleImage, bool requiresRelocations, const char *moduleImageName, bool injectMatchingImports, bool doTakeoverExports, std::uint32_t archPointerSize )
+    inline int EmbedModuleIntoExecutable( PEFile& moduleImage, bool requiresRelocations, const char *moduleImageName, bool injectMatchingImports, bool doTakeoverExports, bool doIgnoreResources, std::uint32_t archPointerSize )
     {
         PEFile& exeImage = this->embedImage;
 
@@ -1001,16 +1001,23 @@ struct AssemblyEnvironment
         // Copy over the resources aswell.
         if ( moduleImage.resourceRoot.IsEmpty() == false )
         {
-            std::cout << "embedding module resources" << std::endl;
-
-            // We merge things.
-            bool hasChanged =
-                resourceHelpers::EmbedResourceDirectoryInto( peString <wchar_t> (), resolveSectionLink, exeImage.resourceRoot, moduleImage.resourceRoot );
-
-            if ( hasChanged )
+            if ( !doIgnoreResources )
             {
-                // Need to write new resource data directory.
-                exeImage.resAllocEntry = PEFile::PESectionAllocation();
+                std::cout << "embedding module resources" << std::endl;
+
+                // We merge things.
+                bool hasChanged =
+                    resourceHelpers::EmbedResourceDirectoryInto( peString <wchar_t> (), resolveSectionLink, exeImage.resourceRoot, moduleImage.resourceRoot );
+
+                if ( hasChanged )
+                {
+                    // Need to write new resource data directory.
+                    exeImage.resAllocEntry = PEFile::PESectionAllocation();
+                }
+            }
+            else
+            {
+                std::cout << "ignoring resources" << std::endl;
             }
         }
 
@@ -1661,6 +1668,7 @@ int main( int argc, char *argv[] )
     bool doInjectMatchingImports = false;
     bool doTakeoverExports = true;
     bool doPrintHelp = false;
+    bool doIgnoreResources = false;
 
     if ( argc >= 1 )
     {
@@ -1690,6 +1698,10 @@ int main( int argc, char *argv[] )
             {
                 doPrintHelp = true;
             }
+            else if ( opt == "nores" || opt == "ignres" )
+            {
+                doIgnoreResources = true;
+            }
             else
             {
                 std::cout << "unknown cmdline option: " << opt << std::endl;
@@ -1713,6 +1725,7 @@ int main( int argc, char *argv[] )
         std::cout << "-efix: restores original executable entry point in PE header after DLL load" << std::endl;
         std::cout << "-injimp: hooks executable imports with input DLL exports" << std::endl;
         std::cout << "-noexp: does not take over DLL exports into executable" << std::endl;
+        std::cout << "-nores: leaves out resources from the DLL" << std::endl;
         std::cout << "-help: prints this help text" << std::endl;
 
         return 0;
@@ -2057,7 +2070,7 @@ int main( int argc, char *argv[] )
                 const char *moduleFileName = FetchFileName( inputModImageName );
 
                 // Perform the embedding.
-                int statusEmbed = asmEnv.EmbedModuleIntoExecutable( moduleImage, requiresRelocations, moduleFileName, doInjectMatchingImports, doTakeoverExports, archPointerSize );
+                int statusEmbed = asmEnv.EmbedModuleIntoExecutable( moduleImage, requiresRelocations, moduleFileName, doInjectMatchingImports, doTakeoverExports, doIgnoreResources, archPointerSize );
 
                 if ( statusEmbed != 0 )
                 {
