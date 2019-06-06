@@ -9,6 +9,8 @@
 #include <unordered_map>
 
 #include <fstream>
+#include <list>
+#include <vector>
 
 #include <asmjitshared.h>
 
