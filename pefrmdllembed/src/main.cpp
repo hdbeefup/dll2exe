@@ -508,7 +508,7 @@ static inline PEFile::PESectionAllocation ResolvePEAllocation( const PEFile::PES
 }
 
 template <typename sectResolver_t>
-static inline std::uint32_t ResolvePESectionRVA( const PEFile::PESectionDataReference& srcRef, const sectResolver_t& resolver )
+static inline std::uint32_t ResolvePESectionRVA( const PEFile::PESectionDataReference& srcRef, const sectResolver_t& resolver, PEFile::PESection **targetSectOut = nullptr )
 {
     PEFile::PESection *srcSect = srcRef.GetSection();
 
@@ -518,6 +518,11 @@ static inline std::uint32_t ResolvePESectionRVA( const PEFile::PESectionDataRefe
     }
 
     PEFile::PESection *targetSect = resolver( srcSect );
+
+    if ( targetSectOut != nullptr )
+    {
+        *targetSectOut = targetSect;
+    }
 
     return ( targetSect->ResolveRVA( srcRef.GetSectionOffset() ) );
 }
@@ -568,7 +573,11 @@ struct AssemblyEnvironment
         return;
     }
 
-    inline int EmbedModuleIntoExecutable( PEFile& moduleImage, bool requiresRelocations, const char *moduleImageName, bool injectMatchingImports, bool doTakeoverExports, bool doIgnoreResources, std::uint32_t archPointerSize )
+    inline int EmbedModuleIntoExecutable(
+        PEFile& moduleImage, bool requiresRelocations, const char *moduleImageName,
+        bool injectMatchingImports, bool doTakeoverExports, bool doIgnoreResources, bool doFixEntrypointExecutable, bool markAllSectionsExecutable,
+        std::uint32_t archPointerSize
+    )
     {
         PEFile& exeImage = this->embedImage;
 
@@ -653,6 +662,11 @@ struct AssemblyEnvironment
             PEFile::PESection newSect;
             newSect.shortName = theSect->shortName;
             newSect.chars = theSect->chars;
+
+            if ( markAllSectionsExecutable )
+            {
+                newSect.chars.sect_mem_execute = true;
+            }
 
             size_t sectDataSize = (size_t)theSect->stream.Size();
 
@@ -837,7 +851,7 @@ struct AssemblyEnvironment
                 PEStructures::IMAGE_DATA_DIRECTORY dataDirs[ PEL_IMAGE_NUMBEROF_DIRECTORY_ENTRIES ];
                 memset( dataDirs, 0, sizeof(dataDirs) );
 
-                // TOOD: fill them out as necessary.
+                // TODO: fill them out as necessary.
 
                 // Write the data dirs.
                 pedataSect.stream.WriteStruct( dataDirs );
@@ -1587,12 +1601,15 @@ struct AssemblyEnvironment
 
         if ( modEntryPointRef.GetSection() != nullptr )
         {
+            PEFile::PESection *targetModEntryPointSect;
+
             // Call into the DLL entry point with the default parameters.
-            std::uint32_t rvaToDLLEntryPoint = ResolvePESectionRVA( modEntryPointRef, resolveSectionLink );
+            std::uint32_t rvaToDLLEntryPoint = ResolvePESectionRVA( modEntryPointRef, resolveSectionLink, &targetModEntryPointSect );
             {
                 std::uint32_t paramReserved = 0;
                 std::uint32_t paramReason = 1;      // DLL_PROCESS_ATTACH
 
+                // Call the DLL entry point.
                 if ( genCodeArch == asmjit::ArchInfo::kTypeX86 )
                 {
                     x86_asm.push( paramReserved );
@@ -1602,20 +1619,28 @@ struct AssemblyEnvironment
                 }
                 else if ( genCodeArch == asmjit::ArchInfo::kTypeX64 )
                 {
-                    // Call the DLL entry point.
                     x86_asm.mov( asmjit::x86::rcx, dllInstanceHandle );
                     x86_asm.mov( asmjit::x86::rdx, paramReason );
                     x86_asm.mov( asmjit::x86::r8, paramReserved );
                     x86_asm.call( rvaToDLLEntryPoint );
-
-                    // Since the next is a call that will never return, actually adjust the stack.
-                    x86_asm.sub( asmjit::x86::rsp, 8 );
                 }
                 else
                 {
                     std::cout << "unknown target machine architecture for entry point generation" << std::endl;
 
                     return -12;
+                }
+
+                // If the section of the entry point is not marked executable, then we probably want to fix this here.
+                // This is a strange thing inside of the Win32 PE loader.
+                if ( doFixEntrypointExecutable )
+                {
+                    if ( targetModEntryPointSect->chars.sect_mem_execute == false )
+                    {
+                        std::cout << "fixing module entry point section to executable" << std::endl;
+
+                        targetModEntryPointSect->chars.sect_mem_execute = true;
+                    }
                 }
             }
         }
@@ -1669,6 +1694,8 @@ int main( int argc, char *argv[] )
     bool doFixEntryPoint = false;
     bool doInjectMatchingImports = false;
     bool doTakeoverExports = true;
+    bool doFixEntrypointExecutable = true;
+    bool markAllSectionsExecutable = false;
     bool doPrintHelp = false;
     bool doIgnoreResources = false;
 
@@ -1704,6 +1731,14 @@ int main( int argc, char *argv[] )
             {
                 doIgnoreResources = true;
             }
+            else if ( opt == "noentryexecfix" || opt == "noeexecfix" )
+            {
+                doFixEntrypointExecutable = false;
+            }
+            else if ( opt == "marksectexec" )
+            {
+                markAllSectionsExecutable = true;
+            }
             else
             {
                 std::cout << "unknown cmdline option: " << opt << std::endl;
@@ -1728,6 +1763,8 @@ int main( int argc, char *argv[] )
         std::cout << "-injimp: hooks executable imports with input DLL exports" << std::endl;
         std::cout << "-noexp: does not take over DLL exports into executable" << std::endl;
         std::cout << "-nores: leaves out resources from the DLL" << std::endl;
+        std::cout << "-noentryexecfix: prevents making sections of entry points executable if not already" << std::endl;
+        std::cout << "-marksectexec: marks all injected sections executable" << std::endl;
         std::cout << "-help: prints this help text" << std::endl;
 
         return 0;
@@ -2072,7 +2109,11 @@ int main( int argc, char *argv[] )
                 const char *moduleFileName = FetchFileName( inputModImageName );
 
                 // Perform the embedding.
-                int statusEmbed = asmEnv.EmbedModuleIntoExecutable( moduleImage, requiresRelocations, moduleFileName, doInjectMatchingImports, doTakeoverExports, doIgnoreResources, archPointerSize );
+                int statusEmbed = asmEnv.EmbedModuleIntoExecutable(
+                    moduleImage, requiresRelocations, moduleFileName,
+                    doInjectMatchingImports, doTakeoverExports, doIgnoreResources, doFixEntrypointExecutable, markAllSectionsExecutable,
+                    archPointerSize
+                );
 
                 if ( statusEmbed != 0 )
                 {
