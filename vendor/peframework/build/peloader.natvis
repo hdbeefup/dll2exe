@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+  <Type Name="PEFile::PESectionMan">
+    <Expand>
+      <Item Name="[alignment]">this-&gt;sectionAlignment</Item>
+      <Item Name="[count]">this-&gt;numSections</Item>
+      <CustomListItems>
+        <Variable Name="node" InitialValue="this-&gt;sectionList.root.next" />
+        <Variable Name="item" InitialValue="(PESection*)0"/>
+        <Loop Condition="node != &amp;this-&gt;sectionList.root">
+          <Exec>item = (PESection*)( (char*)node - (unsigned int)&amp;( (PESection*)0 )->sectionNode )</Exec>
+          <Item Name="">*item</Item>
+          <Exec>node = node-&gt;next</Exec>
+        </Loop>
+      </CustomListItems>
+    </Expand>
+  </Type>
+  <Type Name="PEFile::PESection::PESectionDataReference">
+    <DisplayString Condition="this->theSect != 0">( {this->theSect->shortName,sb}:{this->sectOffset,x} )</DisplayString>
+  </Type>
+</AutoVisualizer>
