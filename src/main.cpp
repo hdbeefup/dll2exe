@@ -1684,9 +1684,11 @@ static const char* FetchFileName( const char *path )
 int main( int argc, char *argv[] )
 {
     std::cout <<
-        "pefrmdllembed - Inject DLL file into EXE file, compiled on " __DATE__ << std::endl
-     << "visit http://pefrm-units.osdn.jp/pefrmdllembed.html" << std::endl << std::endl;
+        "dll2exe - Inject DLL or ASI file into EXE file, compiled on " __DATE__ << std::endl
+     << "Source code and builds available on https://github.com/bads-tm-lab/dll2exe" << std::endl << std::endl;
+	 << "\nBased on http://pefrm-units.osdn.jp/pefrmdllembed.html" << std::endl << std::endl;
 
+	// dll2exe.exe app.exe patch1.asi patch2.asi app_patched.exe
     // Syntax: pefrmdllembed.exe *OPTIONS* *input exe filename* *input mod1 filename* *input mod2 filename* ... *input modn filename* *output exe filename*
 
     size_t curArg = 1;
