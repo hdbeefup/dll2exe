@@ -159,6 +159,13 @@
   <ItemGroup>
     <ClCompile Include="..\src\**\*.cpp" />
     <ClInclude Include="..\src\**\*.h" />
+    <ClInclude Include="resource.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="verinfo.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="icon.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
